@@ -96,12 +96,12 @@ FOUNDRY_RESOURCE_ID=$(az cognitiveservices account show \
     --resource-group "$RESOURCE_GROUP" \
     --query id -o tsv)
 
-az resource update \
+MSYS_NO_PATHCONV=1 az resource update \
     --ids "$FOUNDRY_RESOURCE_ID" \
     --set properties.disableLocalAuth=false \
     --output none || true
 
-az resource update \
+MSYS_NO_PATHCONV=1 az resource update \
     --ids "$FOUNDRY_RESOURCE_ID" \
     --set properties.allowProjectManagement=true \
     --output none
@@ -152,7 +152,7 @@ LOG_ANALYTICS_ID=$(az monitor log-analytics workspace show \
 
 # --- Application Insights ----------------------------------------------------
 echo ">>> Creating Application Insights (linked to Log Analytics)..."
-az monitor app-insights component create \
+MSYS_NO_PATHCONV=1 az monitor app-insights component create \
     --app "$APP_INSIGHTS_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
