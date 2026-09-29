@@ -1,1 +1,4 @@
 env/
+hackathon-code-base/
+.env
+.env.*
