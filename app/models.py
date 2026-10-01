@@ -9,8 +9,21 @@ class SentimentLabel(str, Enum):
     MIXED = "mixed"
     NEUTRAL = "neutral"
 
-class SentimentResult(BaseModel):
+class SentimentAnalysisResult(BaseModel):
     sentiment: SentimentLabel
+    percentage: float
+
+
+class FunctionalityExtractionResult(BaseModel):
+    """The concrete product capabilities found in one feedback message."""
+
+    functionalities: list[str]
+
+
+class FeedbackAnalysisResult(SentimentAnalysisResult):
+    """The complete analysis returned by the combined feedback tool."""
+
+    functionalities: list[str]
 
 class FeedbackInput(BaseModel):
     feedback: str = Field(min_length=1, max_length=MAX_INPUT_LENGTH)
