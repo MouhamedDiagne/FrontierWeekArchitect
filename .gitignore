@@ -2,5 +2,6 @@ env/
 hackathon-code-base/
 .env
 .env.*
+app/_pycache__/
 
 scripts/

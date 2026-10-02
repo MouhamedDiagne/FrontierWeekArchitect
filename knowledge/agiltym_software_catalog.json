@@ -1,0 +1,266 @@
+{
+  "schema_version": "1.0",
+  "source_file": "knowledge_agiltym_softwares.md",
+  "applications": [
+    {
+      "id": "targetym_ai",
+      "display_name": "Targetym AI",
+      "aliases": ["Targetym"],
+      "description": "AI-assisted human-resources information system (SIRH) focused on automating HR processes.",
+      "catalog_status": "provisional_generated",
+      "functionalities": [
+        {
+          "id": "employee_records",
+          "name": "Employee records",
+          "aliases": ["dossier salarié", "dossiers salariés", "employee profile", "profil employé"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "employee_onboarding",
+          "name": "Employee onboarding",
+          "aliases": ["onboarding", "intégration", "nouveaux employés"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "leave_and_absence_management",
+          "name": "Leave and absence management",
+          "aliases": ["congés", "absences", "leave request", "demande de congé"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "recruitment_management",
+          "name": "Recruitment management",
+          "aliases": ["recrutement", "candidatures", "candidates", "candidats"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "performance_management",
+          "name": "Performance management",
+          "aliases": ["performance review", "évaluation", "objectifs"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "hr_document_management",
+          "name": "HR document management",
+          "aliases": ["documents RH", "contrats", "attestations", "HR documents"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "hr_workflow_automation",
+          "name": "HR workflow automation",
+          "aliases": ["workflow RH", "automatisation RH", "validations"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "hr_reporting",
+          "name": "HR reporting",
+          "aliases": ["reporting RH", "tableau de bord RH", "HR dashboard"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "employee_self_service",
+          "name": "Employee self-service portal",
+          "aliases": ["espace salarié", "portail employé", "self-service"],
+          "catalog_status": "provisional_generated"
+        }
+      ]
+    },
+    {
+      "id": "bleom_vie",
+      "display_name": "Bleom Vie",
+      "aliases": ["BLEOM", "Bleom"],
+      "description": "AI-native life-insurance solution.",
+      "catalog_status": "provisional_generated",
+      "functionalities": [
+        {
+          "id": "insurance_quotes_and_subscription",
+          "name": "Insurance quotes and subscription",
+          "aliases": ["devis", "souscription", "quote", "subscription"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "policy_management",
+          "name": "Policy management",
+          "aliases": ["contrat", "police", "policy", "assurance vie"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "beneficiary_management",
+          "name": "Beneficiary management",
+          "aliases": ["bénéficiaire", "beneficiary", "bénéficiaires"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "underwriting_and_risk_assessment",
+          "name": "Underwriting and risk assessment",
+          "aliases": ["underwriting", "évaluation du risque", "risk assessment"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "premium_management",
+          "name": "Premium management",
+          "aliases": ["prime", "primes", "cotisation", "premium"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "claims_and_benefits_management",
+          "name": "Claims and benefits management",
+          "aliases": ["sinistre", "prestation", "claim", "benefit"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "policy_document_management",
+          "name": "Policy document management",
+          "aliases": ["documents de contrat", "policy documents", "documents assurance"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "customer_support",
+          "name": "Customer support",
+          "aliases": ["support client", "assistance", "customer support"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "insurance_reporting",
+          "name": "Insurance reporting",
+          "aliases": ["reporting assurance", "tableau de bord", "insurance dashboard"],
+          "catalog_status": "provisional_generated"
+        }
+      ]
+    },
+    {
+      "id": "dealym_crm",
+      "display_name": "Dealym CRM",
+      "aliases": ["Dealym"],
+      "description": "Multi-entity customer relationship and sales-management solution.",
+      "catalog_status": "provisional_generated",
+      "functionalities": [
+        {
+          "id": "lead_management",
+          "name": "Lead management",
+          "aliases": ["prospects", "leads", "prospection", "lead"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "opportunity_pipeline",
+          "name": "Opportunity pipeline",
+          "aliases": ["opportunités", "pipeline", "sales pipeline"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "customer_account_management",
+          "name": "Customer account management",
+          "aliases": ["comptes clients", "customer accounts", "client account"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "sales_activity_management",
+          "name": "Sales activity management",
+          "aliases": ["tâches commerciales", "activités", "sales activities"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "quotes_and_offers",
+          "name": "Quotes and offers",
+          "aliases": ["devis", "offres", "quote", "offer"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "sales_reporting",
+          "name": "Sales reporting",
+          "aliases": ["reporting commercial", "tableau de bord commercial", "sales dashboard"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "multi_entity_management",
+          "name": "Multi-entity management",
+          "aliases": ["multi-entités", "multi entity", "entités"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "customer_interaction_history",
+          "name": "Customer interaction history",
+          "aliases": ["historique des échanges", "interaction history", "historique client"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "sales_forecasting",
+          "name": "Sales forecasting",
+          "aliases": ["prévisions commerciales", "forecast", "sales forecast"],
+          "catalog_status": "provisional_generated"
+        }
+      ]
+    },
+    {
+      "id": "ohady_ai",
+      "display_name": "Ohady AI",
+      "aliases": ["OHADY", "Ohady"],
+      "description": "SYSCOHADA-native accounting solution augmented by artificial intelligence.",
+      "catalog_status": "provisional_generated",
+      "functionalities": [
+        {
+          "id": "chart_of_accounts",
+          "name": "Chart of accounts",
+          "aliases": ["plan comptable", "chart of accounts", "SYSCOHADA accounts"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "accounting_entries",
+          "name": "Accounting entries",
+          "aliases": ["écritures comptables", "saisie comptable", "accounting entries"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "journals_and_ledger",
+          "name": "Journals and general ledger",
+          "aliases": ["journaux", "grand livre", "general ledger"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "invoice_processing",
+          "name": "Invoice processing",
+          "aliases": ["factures", "invoice", "traitement des factures"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "bank_reconciliation",
+          "name": "Bank reconciliation",
+          "aliases": ["rapprochement bancaire", "bank reconciliation"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "financial_reporting",
+          "name": "Financial reporting",
+          "aliases": ["états financiers", "reporting financier", "financial statements"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "syscohada_compliance",
+          "name": "SYSCOHADA compliance",
+          "aliases": ["conformité SYSCOHADA", "SYSCOHADA compliance"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "accounting_document_management",
+          "name": "Accounting document management",
+          "aliases": ["pièces comptables", "documents comptables", "accounting documents"],
+          "catalog_status": "provisional_generated"
+        },
+        {
+          "id": "ai_assisted_accounting_classification",
+          "name": "AI-assisted accounting classification",
+          "aliases": ["imputation comptable", "classification IA", "AI classification"],
+          "catalog_status": "provisional_generated"
+        }
+      ]
+    },
+    {
+      "id": "managersity",
+      "display_name": "Managersity",
+      "aliases": [],
+      "description": "No product description was supplied in the available knowledge source.",
+      "catalog_status": "needs_source",
+      "functionalities": []
+    }
+  ]
+}

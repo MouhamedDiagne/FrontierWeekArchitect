@@ -15,10 +15,18 @@
   * **2nd version :** 
 
     * commentaire --> AI Language Sentiment Analysis --> Sentiment, Confidence Percentage
-    * commentaire --> light LLM --> concerned Application functionality, alert level (???)
+
+      * "mixed" sentiment now handled. Custom confidence score calculated from the "negative" and "positive" sentiment confidence scores.
+    * commentaire --> light LLM --> concerned Application functionality, alert level (not yet)
+
+      * "agent\_reference" object given in the extra\_body parameter of the openai model call. **Not for this tool.**
     * commentaire --> Analysis --> saved in Database
     * Agent tools : 1. Sentiment Analysis, 2. Functionality Detection, 3. Database Connection, 
     * Agent skills : 4. General Analysis.
+    * General 
+
+      * detect language method implemented before Text Analysis tools.
+      * detailed knowledge about the set of softwares concerned by the project and their associated services. --> **knowledge.py**
 
 
 
@@ -30,15 +38,13 @@ Questions / Detailed Steps :
 
 
 
-* Comment Azure AI Language gère les langues ? --> Detect Language method is now used in the code.
 * In the SentimentAnalysisResult schema, how to make the percentage attribute a float between 0 et 1 ? 
-* A quoi sert le "extra\_body" dans l'appel de l'API openai ?
 * Pourquoi ne pas donner directement l'input à la fonction outil d'analyse de sentiment ? 
-* How are "Mixed" sentiments handled at the moment ? --> solved
-* Can tool functions be traced ? --> See after enabling log analytics
-* How to connect to a database or Dataverse Table from client Application ? 
-* Definir le client TextAnalytics lors de la création de l'agent et non dans l'outil d'Analyse de Sentiment (???)
-* Add detailed Knowledge about the different apps and their defined Functionalities
-* Look into logs
+* Can tool functions be traced ? --> See after enabling log analytics 
+* How to connect to a database or Dataverse Table from client Application ? (now)
+* Definir le client TextAnalytics lors de la création de l'agent et non dans l'outil d'Analyse de Sentiment 
+* Add detailed Knowledge about the different apps and their defined Functionalities (ongoing)
+* Look into logs + Bills
 * Integrate Log Insights
+* Ajouter les vraies fonctionnalités de Targetym AI
 
