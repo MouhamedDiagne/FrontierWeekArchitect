@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 
-from app import agent as agent_module
+from app import agents as agent_module
 from app.knowledge import get_software_knowledge, load_software_catalog
 from app.models import (
     FeedbackAnalysisResult,
