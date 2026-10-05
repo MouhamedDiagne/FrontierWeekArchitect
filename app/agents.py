@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition, AgentVersionDetails
@@ -9,6 +10,7 @@ from openai.types.responses.response_input_param import FunctionCallOutput
 from pydantic import ValidationError
 from typing import Any
 
+from .dataverse import FeedbackRepository
 from .config import (
     PROJECT_CONNECTION_STRING, MODEL_DEPLOYMENT_NAME
 )   
@@ -57,10 +59,11 @@ def build_agent_system_prompt(catalog: SoftwareCatalog | None = None) -> str:
 FEEDBACK_ANALYSIS_TOOL = build_feedback_analysis_tool()
 
 class FeedbackAnalyzerAgent:
-    def __init__(self, *, verbose: bool = True) -> None:
+    def __init__(self, *, verbose: bool = True, feedback_repository: FeedbackRepository) -> None:
         self.agent: AgentVersionDetails | None = None
         self.client: AIProjectClient | None = None
         self.openai: Any | None = None
+        self.feedback_repository = feedback_repository
         self.verbose = verbose
 
     def _log(self, step: str, message: str) -> None:
@@ -204,7 +207,24 @@ class FeedbackAnalyzerAgent:
                 )
             return json.dumps({"error": f"{tool_name} could not be completed."})
 
-    def run(self, feedback: str, *, software_id: str) -> str:
+    def _persist_analysis(
+        self,
+        *,
+        raw_comment: str,
+        analysis: FeedbackAnalysisResult,
+        received_at: datetime,
+        analyzed_at: datetime,
+    ) -> None:
+        self._log("persistence", "Saving validated analysis to Dataverse.")
+        self.feedback_repository.save(
+            raw_comment=raw_comment,
+            analysis=analysis,
+            received_at=received_at,
+            analyzed_at=analyzed_at,
+        )
+        self._log("persistence", "Validated analysis saved to Dataverse.")
+
+    def run(self, feedback: str, *, software_id: str, received_at: datetime | None = None,) -> str:
         """Run the Feedback Analyzer Agent for one caller-selected software."""
         stage = "agent_precondition"
         try:
@@ -213,6 +233,7 @@ class FeedbackAnalyzerAgent:
 
             stage = "input_validation"
             request = FeedbackInput(software_id=software_id, feedback=feedback)
+            received_at_utc = received_at or datetime.now(timezone.utc)
             
             stage = "software_context"
             get_software_knowledge(request.software_id)
@@ -259,9 +280,17 @@ class FeedbackAnalyzerAgent:
                 )
                 if not function_calls:
                     if validated_tool_result is not None:
+                        analyzed_at = datetime.now(timezone.utc)
                         self._log(
                             "agent",
                             "Final answer received; returning the validated tool result.",
+                        )
+                        stage = "dataverse_persistence"
+                        self._persist_analysis(
+                            raw_comment=request.feedback,
+                            analysis=validated_tool_result,
+                            received_at=received_at_utc,
+                            analyzed_at=analyzed_at
                         )
                         return validated_tool_result.model_dump_json()
                     self._log("agent", "Final answer received from Foundry.")

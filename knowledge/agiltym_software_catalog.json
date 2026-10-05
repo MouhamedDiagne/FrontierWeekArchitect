@@ -253,14 +253,6 @@
           "catalog_status": "provisional_generated"
         }
       ]
-    },
-    {
-      "id": "managersity",
-      "display_name": "Managersity",
-      "aliases": [],
-      "description": "No product description was supplied in the available knowledge source.",
-      "catalog_status": "needs_source",
-      "functionalities": []
     }
   ]
 }

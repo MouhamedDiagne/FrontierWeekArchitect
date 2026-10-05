@@ -192,6 +192,7 @@ def analyze_sentiment(
         result = SentimentAnalysisResult(
             sentiment=label,
             percentage=round(confidence_score, 4),
+            language=language
         )
         _log(
             "sentiment",
@@ -352,6 +353,7 @@ def analyze_feedback(
             percentage=sentiment_result.percentage,
             software=SoftwareReference(id=software.id, name=software.display_name),
             functionalities=functionality_result.functionalities,
+            language=sentiment_result.language
         )
         _log("analysis", "Combined feedback analysis completed.", verbose=verbose)
         return result

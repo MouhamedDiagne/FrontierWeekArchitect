@@ -1,7 +1,9 @@
 import os
 import sys
 from azure.ai.projects.models import AgentVersionDetails
+from datetime import datetime, timezone
 
+from .dataverse import DataverseFeedbackRepository 
 from .agents import FeedbackAnalyzerAgent
 from .config import PROJECT_CONNECTION_STRING, MODEL_DEPLOYMENT_NAME,AZURE_AI_LANGUAGE_ENDPOINT, AZURE_AI_LANGUAGE_KEY
 from .knowledge import load_software_catalog
@@ -15,10 +17,16 @@ def main() -> None:
         if not PROJECT_CONNECTION_STRING:
             raise RuntimeError("PROJECT_CONNECTION_STRING must be configured.")
 
+        print("Creating Database Client...")
+        repository = DataverseFeedbackRepository.from_environment(verbose=True)
+
         print("=== Feedback Analyzer Agent ===")
         print("Creating agent...")
 
-        feedback_analyzer = FeedbackAnalyzerAgent(verbose=True)
+        feedback_analyzer = FeedbackAnalyzerAgent(
+            verbose=True,
+            feedback_repository=repository
+        )
         stage = "agent_creation"
         feedback_analyzer.create()
         if feedback_analyzer.client is None or feedback_analyzer.agent is None:
@@ -38,9 +46,13 @@ def main() -> None:
         stage = "interactive_input"
         software_id = input(f"Enter the software ID [{available_software}]: ")
         feedback = input("Enter the customer feedback: ")
+        received_at = datetime.now(timezone.utc)
 
         stage = "agent_run"
-        analysis_result = feedback_analyzer.run(feedback, software_id=software_id)
+        analysis_result = feedback_analyzer.run(
+            feedback, 
+            software_id=software_id,
+            received_at=received_at)
 
         print(analysis_result)
     except Exception as error:

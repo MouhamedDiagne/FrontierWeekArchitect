@@ -1,7 +1,7 @@
 from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-MAX_INPUT_LENGTH = 5000
+MAX_INPUT_LENGTH = 4000
 MAX_SOFTWARE_ID_LENGTH = 80
 
 class SentimentLabel(str, Enum):
@@ -13,6 +13,7 @@ class SentimentLabel(str, Enum):
 class SentimentAnalysisResult(BaseModel):
     sentiment: SentimentLabel
     percentage: float = Field(ge=0.0, le=1.0)
+    language: str = Field(min_length=2, max_length=10)
 
 
 class SoftwareReference(BaseModel):
