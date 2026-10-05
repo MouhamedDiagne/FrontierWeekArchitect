@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Protocol
 from uuid import uuid4
@@ -16,12 +15,43 @@ from .config import (
     DATAVERSE_URL,
 )
 from .errors import _log_error
-from .models import FeedbackAnalysisResult
+from .models import FeedbackAnalysisResult, FeedbackType, ProblemCategory
 from .utils import _log
 
 
 class DataversePersistenceError(RuntimeError):
     """Raised when a completed analysis cannot be saved to Dataverse."""
+
+
+# These labels must match the options configured in the Dataverse Choice columns.
+# The installed Dataverse client resolves Choice labels to their option values.
+# Keeping the mapping here means the rest of the application continues to use
+# stable, language-neutral enum values.
+_FEEDBACK_TYPE_CHOICE_LABELS: dict[FeedbackType, str] = {
+    FeedbackType.ISSUE_REPORT: "Signalement de problème",
+    FeedbackType.FEATURE_REQUEST: "Demande de fonctionnalité",
+    FeedbackType.IMPROVEMENT_SUGGESTION: "Suggestion d’amélioration",
+    FeedbackType.INFORMATION_REQUEST: "Question ou besoin d’information",
+    FeedbackType.POSITIVE_FEEDBACK: "Éloge / retour positif",
+    FeedbackType.OTHER_FEEDBACK: "Autre retour / non classable",
+}
+
+_PROBLEM_CATEGORY_CHOICE_LABELS: dict[ProblemCategory, str] = {
+    ProblemCategory.BUG_ERROR: "Bug ou erreur",
+    ProblemCategory.PERFORMANCE_SLOWDOWN: "Performance / lenteur",
+    ProblemCategory.AVAILABILITY_RELIABILITY: "Indisponibilité / fiabilité",
+    ProblemCategory.USABILITY_UX: "Difficulté d’usage / UX",
+    ProblemCategory.ACCESS_AUTHENTICATION: "Accès / compte / authentification",
+    ProblemCategory.DATA_QUALITY_REPORTING: "Données, rapports ou export",
+    ProblemCategory.BILLING_PAYMENT: "Paiement / facturation",
+    ProblemCategory.INTEGRATION: "Intégration / connecteurs / API",
+    ProblemCategory.DOCUMENTATION_INFORMATION: (
+        "Documentation ou information manquante"
+    ),
+    ProblemCategory.SUPPORT_EXPERIENCE: "Expérience avec le support",
+    ProblemCategory.SECURITY_PRIVACY: "Sécurité / confidentialité",
+    ProblemCategory.OTHER_PROBLEM: "Autre problème",
+}
 
 
 class FeedbackRepository(Protocol):
@@ -31,6 +61,7 @@ class FeedbackRepository(Protocol):
         raw_comment: str,
         analysis: FeedbackAnalysisResult,
         received_at: datetime,
+        analyzed_at: datetime,
     ) -> str:
         ...
 
@@ -97,30 +128,39 @@ class DataverseFeedbackRepository:
         raw_comment: str,
         analysis: FeedbackAnalysisResult,
         received_at: datetime,
-        analyzed_at: datetime
+        analyzed_at: datetime,
     ) -> str:
-
-        # Replace every agil_* key with your real Dataverse column logical name.
-        payload = {
-            "agil_feedbackreference": f"feedback-{uuid4()}",
-            "agil_rawcomment": raw_comment,
-            "agil_receivedat": self._to_utc_iso8601(received_at),
-            "agil_analyzedat": self._to_utc_iso8601(analyzed_at),
-            "agil_softwareid": analysis.software.id,
-            "agil_softwarename": analysis.software.name,
-            "agil_sentiment": analysis.sentiment.value,
-            "agil_confidence": analysis.percentage,
-            "agil_extractedfunctionalities": json.dumps(
-                [
-                    {"id": item.id, "name": item.name}
-                    for item in analysis.functionalities
-                ],
-                ensure_ascii=False,
-            ),
-            "agil_language": analysis.language,
-        }
-
         try:
+            # Replace every agil_* key with your real Dataverse column logical name.
+            payload = {
+                "agil_feedbackreference": f"feedback-{uuid4()}",
+                "agil_rawcomment": raw_comment,
+                "agil_receivedat": self._to_utc_iso8601(received_at),
+                "agil_analyzedat": self._to_utc_iso8601(analyzed_at),
+                "agil_softwareid": analysis.software.id,
+                "agil_softwarename": analysis.software.name,
+                "agil_sentiment": analysis.sentiment.value,
+                "agil_confidence": analysis.percentage,
+                "agil_language": analysis.language,
+                "agil_feedbacktype": _FEEDBACK_TYPE_CHOICE_LABELS[
+                    analysis.feedback_type
+                ],
+                "agil_feedbacksummary": analysis.feedback_summary,
+            }
+
+            if analysis.primary_functionality is not None:
+                payload["agil_primaryfunctionality"] = (
+                    analysis.primary_functionality.id
+                )
+                payload["agil_primaryfunctionalityname"] = (
+                    analysis.primary_functionality.name
+                )
+
+            if analysis.problem_category is not None:
+                payload["agil_problemcategory"] = _PROBLEM_CATEGORY_CHOICE_LABELS[
+                    analysis.problem_category
+                ]
+
             _log(
                 "persistence",
                 "Creating the feedback-analysis record in Dataverse.",

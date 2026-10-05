@@ -33,7 +33,8 @@
     * General
 
       * detect language method implemented before Text Analysis tools.
-      * detailed knowledge about the set of softwares concerned by the project and their associated services. --> **knowledge.py**
+      * detailed knowledge about the set of softwares concerned by the project and their associated services. --> **knowledge.py** 
+      * implement conversation 
     * 
 
 
