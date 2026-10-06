@@ -5,18 +5,34 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import AgentVersionDetails, PromptAgentDefinition
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai.types.responses.response_input_param import FunctionCallOutput
+from openai import OpenAI
 from pydantic import ValidationError
 
-from .config import MODEL_DEPLOYMENT_NAME, PROJECT_CONNECTION_STRING
+from .clustering import ClusteringConfig
+from .config import (
+    CLUSTER_LABEL_MODEL_DEPLOYMENT_NAME,
+    CLUSTER_LABELING_ENABLED,
+    CLUSTER_MAX_COSINE_DISTANCE,
+    CLUSTER_MAX_EXAMPLES,
+    CLUSTER_MAX_FEEDBACKS,
+    CLUSTER_MIN_SIZE,
+    EMBEDDING_BATCH_SIZE,
+    EMBEDDING_MODEL_DEPLOYMENT_NAME,
+    MODEL_DEPLOYMENT_NAME,
+    PROJECT_CONNECTION_STRING,
+    AZURE_OPENAI_ENDPOINT,
+)
 from .conversation import ConversationSession
-from .dataverse import FeedbackRepository
+from .dataverse import FeedbackReader, FeedbackRepository
+from .embeddings import FoundryEmbeddingProvider
 from .errors import _error_was_logged, _log_error
+from .insights import FeedbackInsightsService, OpenAIClusterLabelProvider
 from .knowledge import (
     SoftwareCatalog,
     SoftwareKnowledge,
@@ -28,9 +44,15 @@ from .models import (
     ConversationMessage,
     ConversationTurnResult,
     FeedbackAnalysisResult,
+    FeedbackInsightsRequest,
+    FeedbackInsightsResult,
     FeedbackInput,
 )
-from .tools import analyze_feedback, build_feedback_analysis_tool
+from .tools import (
+    analyze_feedback,
+    build_feedback_analysis_tool,
+    build_feedback_insights_tool,
+)
 from .utils import _log
 
 
@@ -41,6 +63,7 @@ def build_agent_system_prompt(catalog: SoftwareCatalog | None = None) -> str:
     """Build instructions for a user-triggered feedback-analysis conversation."""
 
     knowledge_context = build_agent_knowledge_context(catalog)
+    current_utc_date = datetime.now(timezone.utc).date().isoformat()
 
     return f"""
 You are Agiltym's conversational client-feedback assistant. Speak naturally in
@@ -72,8 +95,20 @@ feedback summary. Do not modify or recalculate those results. Preserve a mixed
 sentiment exactly as returned. Do not claim that the analysis was saved: the
 host application handles persistence separately.
 
-If the user asks for historical reporting, explain that reporting is not yet
-available. Do not pretend to query Dataverse.
+Use analyze_feedback_insights only when the user explicitly asks for historical
+reporting, recurring issues, trends, prioritization, or a report based on saved
+feedback. It reads Dataverse data and returns temporary structured clusters; it
+does not analyze a new feedback or alter database rows. Collect an explicit
+current reporting period before calling it. If comparison is requested, collect
+both non-overlapping periods. Ask one concise clarification when the dates or a
+needed filter are ambiguous. The current UTC date is {current_utc_date}; use UTC
+timestamps when turning an unambiguous relative period into tool arguments.
+
+For any historical report, call analyze_feedback_insights before answering. Base
+the report only on its structured result, never on remembered or raw feedback.
+Clearly mention relevant limitations, including empty periods, singleton clusters,
+clusters marked needs_review, and unavailable client counts. Do not claim a root
+cause, urgency, churn risk, or causal business impact that the tool did not return.
 
 Supported Agiltym solutions:
 {knowledge_context}
@@ -81,6 +116,7 @@ Supported Agiltym solutions:
 
 
 FEEDBACK_ANALYSIS_TOOL = build_feedback_analysis_tool()
+FEEDBACK_INSIGHTS_TOOL = build_feedback_insights_tool()
 
 
 @dataclass(frozen=True)
@@ -91,6 +127,7 @@ class _ToolExecution:
     analysis: FeedbackAnalysisResult | None = None
     raw_comment: str | None = None
     received_at: datetime | None = None
+    insights: FeedbackInsightsResult | None = None
 
 
 class FeedbackAnalyzerAgent:
@@ -98,12 +135,25 @@ class FeedbackAnalyzerAgent:
         self,
         *,
         feedback_repository: FeedbackRepository,
+        feedback_reader: FeedbackReader | None = None,
+        insights_service: FeedbackInsightsService | None = None,
         verbose: bool = True,
     ) -> None:
         self.agent: AgentVersionDetails | None = None
         self.client: AIProjectClient | None = None
         self.openai: Any | None = None
+        self.embedding_client: Any | None = None
         self.feedback_repository = feedback_repository
+        if feedback_reader is not None:
+            self.feedback_reader = feedback_reader
+        elif callable(getattr(feedback_repository, "list_for_insights", None)):
+            # The concrete Dataverse repository implements both narrow roles;
+            # keeping the Protocols separate still lets tests or future sources
+            # supply a dedicated read-only implementation.
+            self.feedback_reader = cast(FeedbackReader, feedback_repository)
+        else:
+            self.feedback_reader = None
+        self._insights_service = insights_service
         self.verbose = verbose
 
     def _log(self, step: str, message: str) -> None:
@@ -143,7 +193,7 @@ class FeedbackAnalyzerAgent:
                 endpoint=PROJECT_CONNECTION_STRING,
                 credential=DefaultAzureCredential(),
             )
-
+            
             stage = "openai_client_initialization"
             self._log("agent", "Getting the project OpenAI client.")
             self.openai = self.client.get_openai_client()
@@ -152,18 +202,19 @@ class FeedbackAnalyzerAgent:
             catalog = load_software_catalog()
             system_prompt = build_agent_system_prompt(catalog)
             feedback_analysis_tool = build_feedback_analysis_tool(catalog)
+            feedback_insights_tool = build_feedback_insights_tool(catalog)
 
             stage = "agent_version_creation"
             self._log(
                 "agent",
-                "Creating a new Foundry agent version with one user-triggered tool.",
+                "Creating a new Foundry agent version with two user-triggered tools.",
             )
             self.agent = self.client.agents.create_version(
                 agent_name="feedback-analyzer-agent",
                 definition=PromptAgentDefinition(
                     model=MODEL_DEPLOYMENT_NAME,
                     instructions=system_prompt,
-                    tools=[feedback_analysis_tool],
+                    tools=[feedback_analysis_tool, feedback_insights_tool],
                 ),
             )
 
@@ -233,6 +284,109 @@ class FeedbackAnalyzerAgent:
 
         return False
 
+    def _get_embedding_client(self) -> Any:
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://ai.azure.com/.default"
+        )
+        client = OpenAI(
+            base_url=f"{str(AZURE_OPENAI_ENDPOINT).rstrip('/')}/",
+            api_key=token_provider
+        )
+
+        return client
+    
+    def _get_insights_service(self) -> FeedbackInsightsService:
+        """Create the local, read-only insights service only when it is needed."""
+
+        if self._insights_service is not None:
+            return self._insights_service
+        
+        self.embedding_client = self._get_embedding_client()
+
+        if self.feedback_reader is None:
+            raise RuntimeError(
+                "A FeedbackReader is required before historical reporting can run."
+            )
+        
+        self._log("insights", "Preparing the temporary feedback-insights service.")
+        embedding_provider = FoundryEmbeddingProvider(
+            self.embedding_client,
+            EMBEDDING_MODEL_DEPLOYMENT_NAME,
+            batch_size=EMBEDDING_BATCH_SIZE,
+            verbose=self.verbose,
+        )
+        label_provider = (
+            OpenAIClusterLabelProvider(
+                self.openai,
+                CLUSTER_LABEL_MODEL_DEPLOYMENT_NAME,
+                verbose=self.verbose,
+            )
+            if CLUSTER_LABELING_ENABLED
+            else None
+        )
+        self._insights_service = FeedbackInsightsService(
+            feedback_reader=self.feedback_reader,
+            embedding_provider=embedding_provider,
+            clustering_config=ClusteringConfig(
+                max_cosine_distance=CLUSTER_MAX_COSINE_DISTANCE,
+                min_cluster_size=CLUSTER_MIN_SIZE,
+                max_examples=CLUSTER_MAX_EXAMPLES,
+                max_feedbacks=CLUSTER_MAX_FEEDBACKS,
+            ),
+            cluster_label_provider=label_provider,
+            verbose=self.verbose,
+        )
+        return self._insights_service
+
+    def _execute_insights_tool(
+        self,
+        function_call: Any,
+        *,
+        sensitive_values: tuple[str, ...],
+    ) -> _ToolExecution:
+        """Run the strictly validated, read-only historical analysis tool."""
+
+        tool_name = FEEDBACK_INSIGHTS_TOOL.name
+        try:
+            tool_request = FeedbackInsightsRequest.model_validate_json(
+                function_call.arguments
+            )
+        except (TypeError, ValidationError) as error:
+            if not _error_was_logged(error):
+                _log_error(
+                    "tool",
+                    "insights_tool_input_rejected",
+                    error,
+                    sensitive_values=sensitive_values,
+                )
+            return _ToolExecution(
+                output=json.dumps(
+                    {"error": f"{tool_name} received invalid input."}
+                )
+            )
+
+        try:
+            result = self._get_insights_service().analyze(tool_request)
+            self._log("tool", f"Tool {tool_name} completed successfully.")
+            return _ToolExecution(
+                output=result.model_dump_json(),
+                insights=result,
+            )
+        except Exception as error:
+            if not _error_was_logged(error):
+                _log_error(
+                    "tool",
+                    "insights_tool_execution_failed",
+                    error,
+                    sensitive_values=sensitive_values,
+                )
+            return _ToolExecution(
+                output=json.dumps(
+                    {"error": f"{tool_name} could not be completed."}
+                )
+            )
+
     def _execute_tool(
         self,
         function_call: Any,
@@ -256,7 +410,10 @@ class FeedbackAnalyzerAgent:
 
         self._log("tool", f"Executing requested tool: {tool_name}.")
 
-        if tool_name != FEEDBACK_ANALYSIS_TOOL.name:
+        if tool_name not in {
+            FEEDBACK_ANALYSIS_TOOL.name,
+            FEEDBACK_INSIGHTS_TOOL.name,
+        }:
             self._log("tool", f"Rejected unsupported tool: {tool_name}.")
             _log_error(
                 "tool",
@@ -265,6 +422,12 @@ class FeedbackAnalyzerAgent:
             )
             return _ToolExecution(
                 output=json.dumps({"error": "Unsupported tool requested."})
+            )
+
+        if tool_name == FEEDBACK_INSIGHTS_TOOL.name:
+            return self._execute_insights_tool(
+                function_call,
+                sensitive_values=sensitive_values,
             )
 
         error_sensitive_values = sensitive_values
@@ -376,6 +539,7 @@ class FeedbackAnalyzerAgent:
             )
 
             pending_analysis: _ToolExecution | None = None
+            pending_insights: FeedbackInsightsResult | None = None
             executed_calls: dict[str, _ToolExecution] = {}
 
             for tool_round in range(MAX_TOOL_ROUNDS + 1):
@@ -410,9 +574,13 @@ class FeedbackAnalyzerAgent:
                             reply=reply,
                             analysis=pending_analysis.analysis,
                             feedback_record_id=record_id,
+                            insights=pending_insights,
                         )
 
-                    return ConversationTurnResult(reply=reply)
+                    return ConversationTurnResult(
+                        reply=reply,
+                        insights=pending_insights,
+                    )
 
                 if tool_round == MAX_TOOL_ROUNDS:
                     raise RuntimeError(
@@ -443,12 +611,29 @@ class FeedbackAnalyzerAgent:
                             )
                         )
                         executed_calls[call_id] = execution
+                    elif (
+                        function_call.name == FEEDBACK_INSIGHTS_TOOL.name
+                        and pending_insights is not None
+                    ):
+                        execution = _ToolExecution(
+                            output=json.dumps(
+                                {
+                                    "error": (
+                                        "Only one historical feedback analysis can be "
+                                        "run per user message."
+                                    )
+                                }
+                            )
+                        )
+                        executed_calls[call_id] = execution
                     else:
                         stage = "tool_execution"
                         execution = self._execute_tool(function_call, session=session)
                         executed_calls[call_id] = execution
                         if execution.analysis is not None:
                             pending_analysis = execution
+                        if execution.insights is not None:
+                            pending_insights = execution.insights
 
                     tool_outputs.append(
                         FunctionCallOutput(

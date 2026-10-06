@@ -69,6 +69,89 @@ def build_feedback_analysis_tool(catalog: SoftwareCatalog | None = None) -> Func
     )
 
 
+def build_feedback_insights_tool(catalog: SoftwareCatalog | None = None) -> FunctionTool:
+    """Build the strict read-only tool schema for historical feedback reports."""
+
+    selected_catalog = catalog or load_software_catalog()
+    software_ids = [application.id for application in selected_catalog.applications]
+    functionality_ids = sorted(
+        {
+            functionality.id
+            for application in selected_catalog.applications
+            for functionality in application.functionalities
+        }
+    )
+
+    # In a strict function schema, every property is required. Nullable values
+    # let the agent express optional filters without inventing a filter value.
+    nullable_string = {"type": ["string", "null"]}
+    return FunctionTool(
+        name="analyze_feedback_insights",
+        description=(
+            "Read and temporarily cluster already-saved customer feedback to answer "
+            "an explicit historical reporting, trend, recurring-issue, or "
+            "prioritization request. It never analyzes a new feedback and never "
+            "changes Dataverse data. Dates must be ISO 8601 timestamps with a timezone."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Inclusive current-period ISO 8601 timestamp with timezone.",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "Exclusive current-period ISO 8601 timestamp with timezone.",
+                },
+                "software_id": {
+                    **nullable_string,
+                    "enum": [None, *software_ids],
+                    "description": "Optional canonical software filter, or null.",
+                },
+                "functionality_id": {
+                    **nullable_string,
+                    "enum": [None, *functionality_ids],
+                    "description": "Optional canonical functionality filter, or null.",
+                },
+                "sentiment": {
+                    "type": ["string", "null"],
+                    "enum": [None, *[sentiment.value for sentiment in SentimentLabel]],
+                    "description": "Optional sentiment filter, or null.",
+                },
+                "feedback_type": {
+                    "type": ["string", "null"],
+                    "enum": [
+                        None,
+                        *[feedback_type.value for feedback_type in FeedbackType],
+                    ],
+                    "description": "Optional primary feedback-type filter, or null.",
+                },
+                "comparison_start_date": {
+                    **nullable_string,
+                    "description": "Optional inclusive ISO 8601 comparison-period start, or null.",
+                },
+                "comparison_end_date": {
+                    **nullable_string,
+                    "description": "Optional exclusive ISO 8601 comparison-period end, or null.",
+                },
+            },
+            "required": [
+                "start_date",
+                "end_date",
+                "software_id",
+                "functionality_id",
+                "sentiment",
+                "feedback_type",
+                "comparison_start_date",
+                "comparison_end_date",
+            ],
+            "additionalProperties": False,
+        },
+        strict=True,
+    )
+
+
 def build_feedback_enrichment_response_schema(
     software: SoftwareKnowledge,
 ) -> dict[str, Any]:
@@ -159,9 +242,12 @@ information_request, positive_feedback, and other_feedback, return
 {NO_VALUE_SENTINEL} for problem_category. An improvement_suggestion may use a
 problem category only when it clearly describes an existing concrete problem.
 
-Write feedback_summary as one concise, factual sentence in the feedback's original
-language. It must state the customer's main point directly, remain at most 280
-characters, and must not invent causes, solutions, personal data, product names, or
+Write feedback_summary as a direct, clear, self-contained reformulation of the
+customer's single main point in the feedback's original language. Preserve the
+relevant functionality, user action, observed result, and explicit context when
+present. This summary will later be used to cluster similar feedbacks, so never use
+generic wording such as "the customer has a problem". It must remain at most 280
+characters and must not invent causes, solutions, personal data, product names, or
 details absent from the feedback. Do not include sentiment, urgency, explanations,
 or values outside the required JSON schema.
 

@@ -46,6 +46,7 @@ def main() -> None:
         feedback_analyzer = FeedbackAnalyzerAgent(
             verbose=True,
             feedback_repository=repository,
+            feedback_reader=repository,
         )
 
         stage = "agent_creation"

@@ -3,5 +3,5 @@ hackathon-code-base/
 .env
 .env.*
 app/__pycache__/
-
+tests/fixtures/
 scripts/

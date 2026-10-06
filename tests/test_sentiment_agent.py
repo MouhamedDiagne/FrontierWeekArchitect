@@ -273,11 +273,15 @@ class FeedbackAnalysisTests(unittest.TestCase):
             agent.create()
 
         definition = fake_client.agents.create_version.call_args.kwargs["definition"]
-        self.assertEqual([tool.name for tool in definition.tools], ["analyze_feedback"])
+        self.assertEqual(
+            [tool.name for tool in definition.tools],
+            ["analyze_feedback", "analyze_feedback_insights"],
+        )
         self.assertIn("Do not begin by asking which software", definition.instructions)
         self.assertIn("Use analyze_feedback only when the user explicitly asks", definition.instructions)
         self.assertIn("primary\nfunctionality", definition.instructions)
         self.assertIn("feedback type", definition.instructions)
+        self.assertIn("analyze_feedback_insights", definition.instructions)
         self.assertIn("problem category", definition.instructions)
         self.assertIn("feedback summary", definition.instructions)
         self.assertIn("targetym_ai", definition.instructions)
@@ -319,6 +323,10 @@ class FeedbackAnalysisTests(unittest.TestCase):
             "Le pipeline commercial ne fonctionne pas.",
         )
         request = fake_openai.responses.calls[0]
+        self.assertIn(
+            "direct, clear, self-contained reformulation",
+            request["instructions"],
+        )
         schema = request["text"]["format"]["schema"]
         allowed_ids = schema["properties"]["primary_functionality_id"]["enum"]
         self.assertEqual(
@@ -748,7 +756,7 @@ class DataversePersistenceTests(unittest.TestCase):
         self.assertEqual(record_id, "dataverse-record-1")
         table_name, payload = client.records.create.call_args.args
         self.assertEqual(table_name, "agil_feedback")
-        self.assertEqual(payload["agil_primaryfunctionalityid"], "opportunity_pipeline")
+        self.assertEqual(payload["agil_primaryfunctionality"], "opportunity_pipeline")
         self.assertEqual(payload["agil_primaryfunctionalityname"], "Opportunity pipeline")
         self.assertEqual(payload["agil_feedbacktype"], "Signalement de problème")
         self.assertEqual(payload["agil_problemcategory"], "Bug ou erreur")
@@ -780,7 +788,7 @@ class DataversePersistenceTests(unittest.TestCase):
 
         payload = client.records.create.call_args.args[1]
         self.assertEqual(payload["agil_feedbacktype"], "Éloge / retour positif")
-        self.assertNotIn("agil_primaryfunctionalityid", payload)
+        self.assertNotIn("agil_primaryfunctionality", payload)
         self.assertNotIn("agil_primaryfunctionalityname", payload)
         self.assertNotIn("agil_problemcategory", payload)
 
