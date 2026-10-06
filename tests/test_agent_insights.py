@@ -59,6 +59,7 @@ def insight_result():
         start_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
         end_date=datetime(2026, 11, 1, tzinfo=timezone.utc),
         software_id="dealym_crm",
+        audience_profile="management",
     )
     return FeedbackInsightsResult(
         request=request,
@@ -75,6 +76,24 @@ def insight_result():
 
 
 class AgentInsightsToolTests(unittest.TestCase):
+    def test_system_prompt_has_structured_reporting_instructions(self):
+        prompt = agent_module.build_agent_system_prompt()
+
+        for heading in (
+            "## Role",
+            "## Missions",
+            "## Comment mener à bien chaque mission",
+            "## Règles Générales",
+            "## Limitations",
+            "## Outils à disposition",
+            "## Guard-rails",
+            "## Fallbacks",
+        ):
+            self.assertIn(heading, prompt)
+        self.assertIn("audience_profile", prompt)
+        self.assertIn("insights contains", prompt)
+        self.assertIn("audience_report contains", prompt)
+
     def test_historical_tool_schema_requires_dates_and_uses_nullable_optional_filters(self):
         tool = tools_module.build_feedback_insights_tool()
 
@@ -89,6 +108,7 @@ class AgentInsightsToolTests(unittest.TestCase):
                 "functionality_id",
                 "sentiment",
                 "feedback_type",
+                "audience_profile",
                 "comparison_start_date",
                 "comparison_end_date",
             ],
@@ -96,6 +116,10 @@ class AgentInsightsToolTests(unittest.TestCase):
         self.assertIn(
             "null",
             tool.parameters["properties"]["software_id"]["type"],
+        )
+        self.assertEqual(
+            tool.parameters["properties"]["audience_profile"]["enum"],
+            ["marketing", "it", "support_sales", "management"],
         )
 
     def test_historical_tool_uses_injected_service_and_never_persists_a_feedback(self):
@@ -114,6 +138,7 @@ class AgentInsightsToolTests(unittest.TestCase):
                     "functionality_id": None,
                     "sentiment": None,
                     "feedback_type": None,
+                    "audience_profile": "management",
                     "comparison_start_date": None,
                     "comparison_end_date": None,
                 }
@@ -149,10 +174,13 @@ class AgentInsightsToolTests(unittest.TestCase):
 
         self.assertEqual(turn.reply, "Aucun feedback n'a été trouvé pour octobre.")
         self.assertEqual(turn.insights, result)
+        self.assertEqual(turn.audience_report.profile.value, "management")
         self.assertEqual(repository.save_calls, [])
         self.assertEqual(service.requests[0].software_id, "dealym_crm")
         tool_output = json.loads(openai.responses.calls[1]["input"][0]["output"])
-        self.assertEqual(tool_output, result.model_dump(mode="json"))
+        self.assertEqual(tool_output["insights"], result.model_dump(mode="json"))
+        self.assertEqual(tool_output["audience_report"]["profile"], "management")
+        self.assertEqual(tool_output["audience_report"]["priority_signal_ids"], [])
 
 
 if __name__ == "__main__":

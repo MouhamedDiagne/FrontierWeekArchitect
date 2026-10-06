@@ -268,6 +268,16 @@ class DataverseFeedbackRepository:
                 f"{columns.functionality} eq "
                 f"'{cls._odata_escape(filters.functionality_id)}'"
             )
+        if filters.sentiment is not None:
+            conditions.append(
+                f"{columns.sentiment} eq "
+                f"'{cls._odata_escape(filters.sentiment)}'"
+            )
+        if filters.feedback_type is not None:
+            conditions.append(
+                f"{columns.feedback_type} eq "
+                f"'{cls._odata_escape(filters.feedback_type)}'"
+            )
         return " and ".join(conditions)
 
     @staticmethod
@@ -436,11 +446,6 @@ class DataverseFeedbackRepository:
                 columns.functionality,
                 columns.functionality_name,
             ]
-            selected_columns.extend(
-                column
-                for column in (columns.client_id, columns.segment)
-                if column is not None
-            )
             # Preserve order while avoiding duplicate select expressions when a
             # deployment uses the same physical column for two optional fields.
             selected_columns = list(dict.fromkeys(selected_columns))

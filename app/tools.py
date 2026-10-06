@@ -26,6 +26,7 @@ from .models import (
     SentimentAnalysisResult,
     SentimentLabel,
     SoftwareReference,
+    UserProfile,
 )
 from .config import (
     AZURE_AI_LANGUAGE_ENDPOINT, AZURE_AI_LANGUAGE_KEY,
@@ -127,6 +128,14 @@ def build_feedback_insights_tool(catalog: SoftwareCatalog | None = None) -> Func
                     ],
                     "description": "Optional primary feedback-type filter, or null.",
                 },
+                "audience_profile": {
+                    "type": "string",
+                    "enum": [profile.value for profile in UserProfile],
+                    "description": (
+                        "The reporting audience inferred from the conversation: "
+                        "marketing, it, support_sales, or management."
+                    ),
+                },
                 "comparison_start_date": {
                     **nullable_string,
                     "description": "Optional inclusive ISO 8601 comparison-period start, or null.",
@@ -143,6 +152,7 @@ def build_feedback_insights_tool(catalog: SoftwareCatalog | None = None) -> Func
                 "functionality_id",
                 "sentiment",
                 "feedback_type",
+                "audience_profile",
                 "comparison_start_date",
                 "comparison_end_date",
             ],

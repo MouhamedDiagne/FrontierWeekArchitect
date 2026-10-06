@@ -72,6 +72,7 @@ def request(*, with_comparison=True):
         "start_date": datetime(2026, 10, 1, tzinfo=timezone.utc),
         "end_date": datetime(2026, 11, 1, tzinfo=timezone.utc),
         "software_id": "dealym_crm",
+        "audience_profile": "it",
     }
     if with_comparison:
         values.update(
@@ -163,6 +164,7 @@ class FeedbackInsightsServiceTests(unittest.TestCase):
             FeedbackInsightsRequest(
                 start_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
                 end_date=datetime(2026, 11, 1, tzinfo=timezone.utc),
+                audience_profile="it",
                 comparison_start_date=datetime(2026, 10, 15, tzinfo=timezone.utc),
                 comparison_end_date=datetime(2026, 11, 15, tzinfo=timezone.utc),
             )

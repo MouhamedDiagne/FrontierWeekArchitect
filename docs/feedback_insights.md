@@ -86,6 +86,40 @@ Cluster membership is never decided by the title-generation model. When
 summaries and provides a clearer title and description. If it fails, the
 deterministic summary-based label remains in use.
 
+## Audience-specific reporting
+
+`analyze_feedback_insights` now requires an `audience_profile`: `marketing`,
+`it`, `support_sales`, or `management`. The agent resolves it from the
+conversation only when the requested perspective is unambiguous; otherwise it
+asks the user to choose. This keeps profile selection conversational rather than
+binding it to a user account at this stage.
+
+The tool returns a wrapper with two complementary sections:
+
+```json
+{
+  "insights": { "...FeedbackInsightsResult..." },
+  "audience_report": { "...AudienceReport..." }
+}
+```
+
+`insights` is the complete, evidence-bound clustering result: scope, counts,
+clusters, representative summaries, priority scores, data quality, and
+limitations. `audience_report` does not recalculate or modify any of these
+facts. It deterministically selects existing cluster IDs into:
+
+- `priority_signal_ids`: the most relevant confirmed signals for the profile;
+- `positive_signal_ids`: confirmed positive signals, shown separately;
+- `watch_list_ids`: singleton or `needs_review` items that require validation;
+- `suggested_follow_up_types`: proposed actions only, never completed actions.
+
+The mapping is intentionally lightweight: IT prioritizes technical incident
+categories, Marketing product opportunities and positive feedback, Support/Sales
+relationship and guidance needs, and Management all confirmed signals in their
+existing priority order. The model turns these references into readable prose,
+but must obtain all factual cluster content from `insights` and must surface the
+returned limitations.
+
 ## Example tool result
 
 ```json

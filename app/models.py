@@ -57,6 +57,15 @@ class FeedbackType(str, Enum):
     OTHER_FEEDBACK = "other_feedback"
 
 
+class UserProfile(str, Enum):
+    """Audience profile used only to tailor a historical-report presentation."""
+
+    MARKETING = "marketing"
+    IT = "it"
+    SUPPORT_SALES = "support_sales"
+    MANAGEMENT = "management"
+
+
 class ProblemCategory(str, Enum):
     """Primary category for a concrete customer-reported problem."""
 
@@ -279,6 +288,7 @@ class FeedbackInsightsFilters(BaseModel):
 class FeedbackInsightsRequest(FeedbackInsightsFilters):
     """One current period, optionally compared with an earlier period."""
 
+    audience_profile: UserProfile
     comparison_start_date: datetime | None = None
     comparison_end_date: datetime | None = None
 
@@ -405,6 +415,7 @@ class ConversationTurnResult(BaseModel):
     analysis: FeedbackAnalysisResult | None = None
     feedback_record_id: str | None = None
     insights: "FeedbackInsightsResult | None" = None
+    audience_report: "AudienceReport | None" = None
 
 class ClusterExample(BaseModel):
     """A non-raw, representative record shown in an insight response."""
@@ -488,3 +499,38 @@ class FeedbackInsightsResult(BaseModel):
     clusters: list[TemporaryFeedbackCluster]
     data_quality: FeedbackInsightsDataQuality
     limitations: list[str]
+
+
+class AudienceReportScope(BaseModel):
+    """Deterministic scope facts displayed by a profile-specific report."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: str
+    software_id: str | None
+    functionality_id: str | None
+    comparison_period: str | None = None
+
+
+class AudienceReport(BaseModel):
+    """Profile-specific selection guidance; it never changes insight facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: UserProfile
+    scope: AudienceReportScope
+    executive_focus: str
+    priority_signal_ids: list[str]
+    positive_signal_ids: list[str]
+    watch_list_ids: list[str]
+    suggested_follow_up_types: list[str]
+    limitations: list[str]
+
+
+class FeedbackInsightsToolResult(BaseModel):
+    """Complete tool result: raw analytical evidence plus audience guidance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    insights: FeedbackInsightsResult
+    audience_report: AudienceReport

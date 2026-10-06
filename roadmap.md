@@ -63,6 +63,6 @@ Questions / Detailed Steps :
 * Update Knowledge about new possible parameter values
 * Generate necessary data, for data
 * Add New Table for issue clusters
-* Build data analysis tool/service
-* 
+* Build analysis tool/service
+* build a tool to get current date time.
 
