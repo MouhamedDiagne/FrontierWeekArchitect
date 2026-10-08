@@ -288,6 +288,29 @@ class FeedbackAnalysisTests(unittest.TestCase):
         self.assertIn("Dealym CRM", definition.instructions)
         self.assertNotIn("opportunity_pipeline", definition.instructions)
 
+    def test_prepare_historical_analysis_does_not_create_an_agent_version(self) -> None:
+        repository = FakeFeedbackRepository()
+        fake_client = SimpleNamespace(
+            agents=SimpleNamespace(create_version=Mock()),
+            get_openai_client=Mock(return_value=SimpleNamespace()),
+            close=Mock(),
+        )
+
+        with (
+            patch.object(agent_module, "PROJECT_CONNECTION_STRING", "https://test"),
+            patch.object(agent_module, "AIProjectClient", return_value=fake_client),
+        ):
+            agent = agent_module.FeedbackAnalyzerAgent(
+                verbose=False,
+                feedback_repository=repository,
+            )
+            agent.prepare_historical_analysis()
+
+        self.assertIsNone(agent.agent)
+        self.assertIsNotNone(agent.client)
+        self.assertIsNotNone(agent.openai)
+        fake_client.agents.create_version.assert_not_called()
+
     def test_extract_feedback_enrichment_uses_only_selected_software_catalog(self) -> None:
         extraction_response = SimpleNamespace(
             error=None,
@@ -723,6 +746,35 @@ class FeedbackAnalysisTests(unittest.TestCase):
         self.assertEqual(
             outputs[1],
             {"error": "Only one feedback item can be analyzed per user message."},
+        )
+
+    def test_direct_submission_uses_the_same_analysis_and_persistence_path(self) -> None:
+        feedback = "The sales pipeline is broken."
+        received_at = datetime(2026, 10, 6, 14, 30, tzinfo=timezone.utc)
+        agent, repository = make_ready_agent([])
+
+        with patch.object(
+            agent_module,
+            "analyze_feedback",
+            return_value=expected_analysis_result(),
+        ) as analyze_feedback:
+            result = agent.analyze_and_save_feedback(
+                feedback=feedback,
+                software_id="dealym_crm",
+                received_at=received_at,
+            )
+
+        self.assertEqual(result.analysis, expected_analysis_result())
+        self.assertEqual(result.feedback_record_id, "record-1")
+        self.assertEqual(len(repository.calls), 1)
+        self.assertEqual(repository.calls[0]["raw_comment"], feedback)
+        self.assertEqual(repository.calls[0]["received_at"], received_at)
+        analyze_feedback.assert_called_once_with(
+            feedback,
+            software_id="dealym_crm",
+            openai_client=agent.openai,
+            model_deployment_name=agent_module.MODEL_DEPLOYMENT_NAME,
+            verbose=False,
         )
 
 

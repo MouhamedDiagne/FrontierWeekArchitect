@@ -131,6 +131,12 @@ class FeedbackInsightsServiceTests(unittest.TestCase):
 
         self.assertEqual(len(reader.filters), 2)
         self.assertEqual(result.total_feedbacks, 3)
+        self.assertIsNotNone(result.metrics)
+        assert result.metrics is not None
+        self.assertEqual(result.metrics.current.feedback_count, 2)
+        self.assertEqual(result.metrics.comparison.feedback_count, 1)
+        self.assertEqual(result.metrics.current.sentiment_distribution, {"negative": 2})
+        self.assertEqual(result.metrics.current.feedback_type_distribution, {"issue_report": 2})
         self.assertEqual(result.clustered_feedbacks, 3)
         self.assertEqual(len(result.clusters), 1)
         cluster = result.clusters[0]

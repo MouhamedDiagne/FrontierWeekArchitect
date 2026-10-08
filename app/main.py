@@ -5,9 +5,12 @@ from __future__ import annotations
 import sys
 
 from .agents import FeedbackAnalyzerAgent
-from .config import PROJECT_CONNECTION_STRING
+from .config import DATAVERSE_INSIGHT_ANALYSIS_TABLE, PROJECT_CONNECTION_STRING
 from .conversation import ConversationSession
-from .dataverse import DataverseFeedbackRepository
+from .dataverse import (
+    DataverseFeedbackRepository,
+    DataverseInsightAnalysisRepository,
+)
 from .errors import _error_was_logged, _log_error
 
 
@@ -40,6 +43,17 @@ def main() -> None:
 
         print("Creating Database Client...")
         repository = DataverseFeedbackRepository.from_environment(verbose=True)
+        snapshot_repository = None
+        if DATAVERSE_INSIGHT_ANALYSIS_TABLE:
+            print("Creating Insight Analysis Database Client...")
+            snapshot_repository = DataverseInsightAnalysisRepository.from_environment(
+                verbose=True
+            )
+        else:
+            print(
+                "Insight snapshot persistence is disabled; "
+                "DATAVERSE_INSIGHT_ANALYSIS_TABLE is not configured."
+            )
 
         print("=== Feedback Analyzer Agent ===")
         print("Creating agent...")
@@ -47,6 +61,7 @@ def main() -> None:
             verbose=True,
             feedback_repository=repository,
             feedback_reader=repository,
+            insights_snapshot_repository=snapshot_repository,
         )
 
         stage = "agent_creation"

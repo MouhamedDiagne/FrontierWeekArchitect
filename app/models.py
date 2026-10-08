@@ -1,8 +1,9 @@
 from enum import Enum
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -14,6 +15,8 @@ MAX_INPUT_LENGTH = 4000
 MAX_SOFTWARE_ID_LENGTH = 80
 MAX_FEEDBACK_SUMMARY_LENGTH = 280
 MAX_INSIGHT_FILTER_VALUE_LENGTH = 120
+MAX_REPRESENTATIVE_EVIDENCE_LENGTH = 320
+MAX_INSIGHT_METRIC_BREAKDOWN_ITEMS = 20
 
 # Foundry strict structured output requires a scalar value for every required
 # field. This sentinel is used only between the model response and local
@@ -416,16 +419,84 @@ class ConversationTurnResult(BaseModel):
     feedback_record_id: str | None = None
     insights: "FeedbackInsightsResult | None" = None
     audience_report: "AudienceReport | None" = None
+    insight_snapshot_id: str | None = None
+    # Produced only by deterministic application code after an insight run.
+    # It is intentionally transport-shaped here to avoid a circular dependency
+    # on app.visualizations, which itself validates domain insight models.
+    visualizations: dict[str, Any] | None = None
 
-class ClusterExample(BaseModel):
-    """A non-raw, representative record shown in an insight response."""
+
+class FeedbackSubmissionResult(BaseModel):
+    """A feedback analysis that was successfully persisted outside a chat turn.
+
+    This intentionally contains no raw feedback text.  It is used by the
+    local ingestion HTTP endpoint and lets a future form connector receive the
+    same validated analysis contract as the conversational path.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    feedback_id: str
-    feedback_summary: str
+    analysis: FeedbackAnalysisResult
+    feedback_record_id: str = Field(min_length=1)
+
+class RepresentativeEvidenceSource(str, Enum):
+    """Origin of a bounded cluster evidence excerpt.
+
+    ``raw_fallback`` is never an unrestricted customer comment: it is only a
+    short, locally-redacted excerpt used when no usable enriched summary is
+    available for that feedback.  Keeping the provenance explicit lets the
+    reporting model and the UI avoid presenting it as a model-generated
+    summary.
+    """
+
+    SUMMARY = "summary"
+    RAW_FALLBACK = "raw_fallback"
+
+
+class ClusterExample(BaseModel):
+    """A privacy-bounded representative item supporting one cluster.
+
+    The canonical transport field is ``evidence_text``.  ``feedback_summary``
+    remains an input-only compatibility alias so historical POC snapshots can
+    still be read.  Raw comments are never represented as a field here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    feedback_id: str = Field(min_length=1, max_length=160)
+    evidence_text: str = Field(
+        min_length=1,
+        max_length=MAX_REPRESENTATIVE_EVIDENCE_LENGTH,
+        validation_alias=AliasChoices("evidence_text", "feedback_summary"),
+    )
+    source: RepresentativeEvidenceSource = RepresentativeEvidenceSource.SUMMARY
     received_at: datetime
-    similarity_to_representative: float | None
+    similarity_to_representative: float | None = Field(default=None, ge=-1, le=1)
+
+    @field_validator("evidence_text")
+    @classmethod
+    def normalize_evidence_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("evidence_text must not be blank")
+        return normalized
+
+    @field_validator("received_at")
+    @classmethod
+    def normalize_received_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("received_at must include a timezone")
+        return value.astimezone(timezone.utc)
+
+    @property
+    def feedback_summary(self) -> str:
+        """Compatibility accessor for older internal callers.
+
+        New code must use ``evidence_text`` and inspect ``source`` before
+        quoting an item in a report.
+        """
+
+        return self.evidence_text
 
 
 class ClusterPriority(BaseModel):
@@ -488,6 +559,53 @@ class FeedbackInsightsDataQuality(BaseModel):
     records_without_usable_representation: int = Field(ge=0)
 
 
+class InsightPeriodMetrics(BaseModel):
+    """Safe aggregate facts for one requested reporting period.
+
+    These values are calculated directly from feedback records but contain no
+    identifiers, raw comments, or summaries.  The functionality map is a
+    bounded top list, which prevents a reporting payload from becoming a copy
+    of the underlying database.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    feedback_count: int = Field(ge=0)
+    sentiment_distribution: dict[str, int] = Field(default_factory=dict)
+    feedback_type_distribution: dict[str, int] = Field(default_factory=dict)
+    problem_category_distribution: dict[str, int] = Field(default_factory=dict)
+    top_functionality_distribution: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator(
+        "sentiment_distribution",
+        "feedback_type_distribution",
+        "problem_category_distribution",
+        "top_functionality_distribution",
+    )
+    @classmethod
+    def validate_metric_distribution(cls, value: dict[str, int]) -> dict[str, int]:
+        if len(value) > MAX_INSIGHT_METRIC_BREAKDOWN_ITEMS:
+            raise ValueError("metric distributions must remain bounded")
+        normalized: dict[str, int] = {}
+        for label, count in value.items():
+            clean_label = " ".join(str(label).split())[:MAX_INSIGHT_FILTER_VALUE_LENGTH]
+            if not clean_label:
+                raise ValueError("metric distribution labels must not be blank")
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError("metric distribution values must be non-negative integers")
+            normalized[clean_label] = count
+        return normalized
+
+
+class FeedbackInsightsMetrics(BaseModel):
+    """Aggregate metrics for the current period and optional comparison."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current: InsightPeriodMetrics
+    comparison: InsightPeriodMetrics | None = None
+
+
 class FeedbackInsightsResult(BaseModel):
     """Structured, read-only result used by the conversational reporting agent."""
 
@@ -498,6 +616,9 @@ class FeedbackInsightsResult(BaseModel):
     clustered_feedbacks: int = Field(ge=0)
     clusters: list[TemporaryFeedbackCluster]
     data_quality: FeedbackInsightsDataQuality
+    # Optional only to keep snapshots created before aggregate metrics
+    # backwards-readable during the POC migration.
+    metrics: FeedbackInsightsMetrics | None = None
     limitations: list[str]
 
 
@@ -528,9 +649,41 @@ class AudienceReport(BaseModel):
 
 
 class FeedbackInsightsToolResult(BaseModel):
-    """Complete tool result: raw analytical evidence plus audience guidance."""
+    """Complete tool result: validated analytical evidence plus audience guidance."""
 
     model_config = ConfigDict(extra="forbid")
 
     insights: FeedbackInsightsResult
     audience_report: AudienceReport
+
+
+class InsightRunSource(str, Enum):
+    """Origin of a persisted historical-analysis snapshot."""
+
+    CONVERSATION = "conversation"
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+
+
+class FeedbackInsightsSnapshot(BaseModel):
+    """Immutable POC snapshot of clustering evidence and audience guidance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    source: InsightRunSource
+    insights: FeedbackInsightsResult
+    audience_report: AudienceReport
+
+    @field_validator("generated_at")
+    @classmethod
+    def normalize_generated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generated_at must include a timezone")
+        return value.astimezone(timezone.utc)
+
+
+class InsightsAnalysisRunResult(FeedbackInsightsToolResult):
+    """Historical analysis returned outside a chat tool call."""
+
+    insight_snapshot_id: str | None = None

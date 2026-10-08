@@ -17,6 +17,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from hashlib import sha256
 from math import isfinite, sqrt
+import re
 from typing import TYPE_CHECKING, Iterable, Sequence
 
 from .models import (
@@ -24,7 +25,9 @@ from .models import (
     ClusterPriority,
     FeedbackRecordForInsights,
     FeedbackType,
+    MAX_REPRESENTATIVE_EVIDENCE_LENGTH,
     ProblemCategory,
+    RepresentativeEvidenceSource,
     TemporaryFeedbackCluster,
 )
 
@@ -64,8 +67,10 @@ class ClusteringConfig:
             )
         if self.min_cluster_size < 2:
             raise ClusteringConfigurationError("min_cluster_size must be at least 2.")
-        if self.max_examples < 1:
-            raise ClusteringConfigurationError("max_examples must be at least 1.")
+        if not 1 <= self.max_examples <= 5:
+            raise ClusteringConfigurationError(
+                "max_examples must be between 1 and 5 to bound representative evidence."
+            )
         if self.max_feedbacks < 1:
             raise ClusteringConfigurationError("max_feedbacks must be at least 1.")
         if self.minimum_representation_length < 1:
@@ -85,6 +90,8 @@ class _PreparedFeedback:
     record: FeedbackRecordForInsights
     representation: str | None
     safe_summary: str | None
+    evidence_text: str | None
+    evidence_source: RepresentativeEvidenceSource | None
 
 
 _UNCLASSIFIED = "unclassified"
@@ -102,6 +109,16 @@ _GENERIC_SUMMARIES = frozenset(
     }
 )
 
+# These expressions deliberately target high-confidence machine-readable PII
+# and credential-bearing links.  They are a POC safety layer, not a substitute
+# for a dedicated DLP/PII-redaction service before a production rollout.
+_EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL_PATTERN = re.compile(r"\b(?:https?://|www\.)[^\s<>{}\[\]]+", re.IGNORECASE)
+_PHONE_PATTERN = re.compile(
+    r"(?<!\w)(?:\+?\d[\d .()\-]{6,}\d)(?!\w)"
+)
+_IPV4_PATTERN = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+
 
 def build_feedback_representation(
     record: FeedbackRecordForInsights,
@@ -111,8 +128,9 @@ def build_feedback_representation(
     """Build the text sent to the embedding provider for one feedback.
 
     A clear enriched summary is always preferred.  The raw comment is used only
-    when that summary is missing or too vague, and remains in memory: raw text
-    is never returned in a ``TemporaryFeedbackCluster``.
+    when that summary is missing or too vague. The complete raw text remains
+    in memory; only a short redacted fallback can later be exposed as clearly
+    marked representative evidence.
     """
 
     effective_config = config or ClusteringConfig()
@@ -166,6 +184,76 @@ def feedback_representation_source(
     return "unusable"
 
 
+def _prepare_feedback(
+    record: FeedbackRecordForInsights,
+    *,
+    config: ClusteringConfig,
+) -> _PreparedFeedback:
+    """Prepare one record without retaining an unrestricted evidence string.
+
+    The representation can legitimately contain a raw fallback because it is
+    sent only to the configured embedding provider.  The separately stored
+    evidence text follows a stricter contract: a generated summary is always
+    preferred; otherwise it is a short, redacted raw fallback with explicit
+    provenance.
+    """
+
+    summary = _usable_text(
+        record.feedback_summary,
+        minimum_length=config.minimum_representation_length,
+    )
+    if summary is not None:
+        return _PreparedFeedback(
+            record=record,
+            representation=build_feedback_representation(record, config=config),
+            safe_summary=summary,
+            evidence_text=summary[:MAX_REPRESENTATIVE_EVIDENCE_LENGTH],
+            evidence_source=RepresentativeEvidenceSource.SUMMARY,
+        )
+
+    raw_fallback = _usable_text(
+        record.raw_comment,
+        minimum_length=config.minimum_representation_length,
+    )
+    redacted_excerpt = (
+        _redact_raw_evidence(raw_fallback) if raw_fallback is not None else None
+    )
+    return _PreparedFeedback(
+        record=record,
+        representation=build_feedback_representation(record, config=config),
+        safe_summary=None,
+        evidence_text=redacted_excerpt,
+        evidence_source=(
+            RepresentativeEvidenceSource.RAW_FALLBACK
+            if redacted_excerpt is not None
+            else None
+        ),
+    )
+
+
+def _redact_raw_evidence(raw_text: str) -> str | None:
+    """Return a small display-safe excerpt of a raw fallback comment.
+
+    The function intentionally does not try to preserve a verbatim comment:
+    it normalizes whitespace, removes common PII/link patterns, and truncates
+    the result. It must never be used for an embedding representation, where
+    retaining the full source text is useful for clustering accuracy.
+    """
+
+    sanitized = " ".join(raw_text.split())
+    sanitized = _URL_PATTERN.sub("[lien masqué]", sanitized)
+    sanitized = _EMAIL_PATTERN.sub("[e-mail masqué]", sanitized)
+    sanitized = _PHONE_PATTERN.sub("[téléphone masqué]", sanitized)
+    sanitized = _IPV4_PATTERN.sub("[adresse IP masquée]", sanitized)
+    if not sanitized:
+        return None
+    if len(sanitized) > MAX_REPRESENTATIVE_EVIDENCE_LENGTH:
+        sanitized = (
+            sanitized[: MAX_REPRESENTATIVE_EVIDENCE_LENGTH - 1].rstrip() + "…"
+        )
+    return sanitized
+
+
 def cluster_feedback_records(
     records: Sequence[FeedbackRecordForInsights],
     *,
@@ -188,14 +276,7 @@ def cluster_feedback_records(
     _validate_records(ordered_records, effective_config)
 
     prepared = [
-        _PreparedFeedback(
-            record=record,
-            representation=build_feedback_representation(record, config=effective_config),
-            safe_summary=_usable_text(
-                record.feedback_summary,
-                minimum_length=effective_config.minimum_representation_length,
-            ),
-        )
+        _prepare_feedback(record, config=effective_config)
         for record in ordered_records
     ]
 
@@ -526,8 +607,8 @@ def _representative_examples(
 ) -> list[ClusterExample]:
     sortable: list[tuple[float, str, int]] = []
     for position in positions:
-        summary = prepared[position].safe_summary
-        if summary is None:
+        evidence_text = prepared[position].evidence_text
+        if evidence_text is None:
             continue
         similarity = (
             None
@@ -548,7 +629,11 @@ def _representative_examples(
         examples.append(
             ClusterExample(
                 feedback_id=record.feedback_id,
-                feedback_summary=prepared[position].safe_summary or "",
+                evidence_text=prepared[position].evidence_text or "",
+                source=(
+                    prepared[position].evidence_source
+                    or RepresentativeEvidenceSource.SUMMARY
+                ),
                 received_at=record.received_at,
                 similarity_to_representative=(
                     None

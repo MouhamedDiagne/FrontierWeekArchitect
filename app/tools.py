@@ -91,8 +91,12 @@ def build_feedback_insights_tool(catalog: SoftwareCatalog | None = None) -> Func
         description=(
             "Read and temporarily cluster already-saved customer feedback to answer "
             "an explicit historical reporting, trend, recurring-issue, or "
-            "prioritization request. It never analyzes a new feedback and never "
-            "changes Dataverse data. Dates must be ISO 8601 timestamps with a timezone."
+            "prioritization request. It never analyzes a new feedback or changes "
+            "feedback rows. When the host has configured it, a separate immutable "
+            "analysis snapshot may be saved. Its dates must be ISO 8601 timestamps "
+            "with a timezone in the function arguments only: resolve ordinary user "
+            "phrases such as 'mars 2026' silently and never ask the user to supply "
+            "technical date formatting."
         ),
         parameters={
             "type": "object",

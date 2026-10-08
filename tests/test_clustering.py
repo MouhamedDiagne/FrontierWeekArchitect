@@ -124,8 +124,12 @@ class ClusteringTests(unittest.TestCase):
             {cluster.feedback_ids[0] for cluster in clusters}, {"fb-1", "fb-2"}
         )
 
-    def test_raw_comment_is_a_embedding_fallback_but_is_never_exposed_as_an_example(self):
-        raw_comment = "The export creates a blank file after the latest release."
+    def test_raw_fallback_is_bounded_redacted_and_explicitly_marked_as_evidence(self):
+        raw_comment = (
+            "The export creates a blank file after the latest release. "
+            "Contact jane.doe@example.com or +33 6 12 34 56 78; "
+            "see https://example.test/reset?token=secret"
+        )
         incomplete_record = record(
             "fb-1",
             None,
@@ -142,8 +146,20 @@ class ClusteringTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(cluster.status, "needs_review")
-        self.assertEqual(cluster.representative_examples, [])
-        self.assertNotIn(raw_comment, cluster.model_dump_json())
+        self.assertEqual(len(cluster.representative_examples), 1)
+        example = cluster.representative_examples[0]
+        self.assertEqual(example.source.value, "raw_fallback")
+        self.assertLessEqual(len(example.evidence_text), 320)
+        self.assertIn("[e-mail masqué]", example.evidence_text)
+        self.assertIn("[téléphone masqué]", example.evidence_text)
+        self.assertIn("[lien masqué]", example.evidence_text)
+        payload = cluster.model_dump(mode="json")
+        self.assertNotIn("raw_comment", payload["representative_examples"][0])
+        self.assertNotIn("jane.doe@example.com", cluster.model_dump_json())
+
+    def test_representative_evidence_cannot_exceed_five_examples(self):
+        with self.assertRaisesRegex(ClusteringConfigurationError, "between 1 and 5"):
+            ClusteringConfig(max_examples=6)
 
     def test_missing_usable_text_does_not_call_embedding_provider(self):
         provider = MappingEmbeddingProvider({})

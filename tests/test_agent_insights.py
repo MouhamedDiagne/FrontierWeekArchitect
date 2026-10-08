@@ -54,6 +54,18 @@ class FakeInsightsService:
         return self.result
 
 
+class FakeInsightsSnapshotRepository:
+    def __init__(self):
+        self.snapshots = []
+
+    def save_snapshot(self, *, snapshot):
+        self.snapshots.append(snapshot)
+        return "snapshot-1"
+
+    def latest_snapshot(self):
+        return self.snapshots[-1] if self.snapshots else None
+
+
 def insight_result():
     request = FeedbackInsightsRequest(
         start_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
@@ -93,6 +105,25 @@ class AgentInsightsToolTests(unittest.TestCase):
         self.assertIn("audience_profile", prompt)
         self.assertIn("insights contains", prompt)
         self.assertIn("audience_report contains", prompt)
+        self.assertIn("immutable", prompt)
+
+    def test_system_prompt_resolves_natural_periods_and_requires_grounded_evidence(self):
+        prompt = agent_module.build_agent_system_prompt()
+
+        self.assertIn("Never\nask the user to provide dates in ISO 8601 format.", prompt)
+        self.assertIn('"mars 2026"', prompt)
+        self.assertIn("2026-03-01T00:00:00Z through 2026-04-01T00:00:00Z", prompt)
+        self.assertIn("most recent occurrence of that month", prompt)
+        self.assertIn("Never expose the internal ISO\nconversion", prompt)
+        self.assertIn("representative_examples", prompt)
+        self.assertIn("three to five short\nevidence examples", prompt)
+        self.assertIn("evidence_text", prompt)
+        self.assertIn("raw_fallback", prompt)
+        self.assertIn("redacted customer excerpt", prompt)
+        self.assertIn("Never reconstruct\nan unseen raw comment", prompt)
+        self.assertIn("insights.metrics.current", prompt)
+        self.assertIn("[[visual:<id>]]", prompt)
+        self.assertIn("never invent a marker or ID", prompt)
 
     def test_historical_tool_schema_requires_dates_and_uses_nullable_optional_filters(self):
         tool = tools_module.build_feedback_insights_tool()
@@ -121,11 +152,14 @@ class AgentInsightsToolTests(unittest.TestCase):
             tool.parameters["properties"]["audience_profile"]["enum"],
             ["marketing", "it", "support_sales", "management"],
         )
+        self.assertIn("immutable analysis snapshot", tool.description)
+        self.assertIn("never ask the user to supply", tool.description)
 
     def test_historical_tool_uses_injected_service_and_never_persists_a_feedback(self):
         result = insight_result()
         service = FakeInsightsService(result)
         repository = FakeFeedbackRepository()
+        snapshot_repository = FakeInsightsSnapshotRepository()
         function_call = SimpleNamespace(
             type="function_call",
             name="analyze_feedback_insights",
@@ -156,6 +190,7 @@ class AgentInsightsToolTests(unittest.TestCase):
         agent = agent_module.FeedbackAnalyzerAgent(
             feedback_repository=repository,
             insights_service=service,
+            insights_snapshot_repository=snapshot_repository,
             verbose=False,
         )
         agent.client = SimpleNamespace()
@@ -175,12 +210,30 @@ class AgentInsightsToolTests(unittest.TestCase):
         self.assertEqual(turn.reply, "Aucun feedback n'a été trouvé pour octobre.")
         self.assertEqual(turn.insights, result)
         self.assertEqual(turn.audience_report.profile.value, "management")
+        self.assertEqual(turn.insight_snapshot_id, "snapshot-1")
+        self.assertIsNotNone(turn.visualizations)
+        assert turn.visualizations is not None
+        self.assertEqual(turn.visualizations["schema_version"], "1.0")
+        self.assertEqual(turn.visualizations["audience_profile"], "management")
         self.assertEqual(repository.save_calls, [])
+        self.assertEqual(len(snapshot_repository.snapshots), 1)
+        self.assertEqual(snapshot_repository.snapshots[0].source.value, "conversation")
         self.assertEqual(service.requests[0].software_id, "dealym_crm")
         tool_output = json.loads(openai.responses.calls[1]["input"][0]["output"])
         self.assertEqual(tool_output["insights"], result.model_dump(mode="json"))
         self.assertEqual(tool_output["audience_report"]["profile"], "management")
         self.assertEqual(tool_output["audience_report"]["priority_signal_ids"], [])
+        self.assertIn("visualization_guide", tool_output)
+        self.assertTrue(tool_output["visualization_guide"])
+        guide_item = tool_output["visualization_guide"][0]
+        self.assertEqual(
+            set(guide_item).intersection(
+                {"id", "kind", "title", "report_section", "inline_anchor"}
+            ),
+            {"id", "kind", "title", "report_section", "inline_anchor"},
+        )
+        self.assertNotIn("data", guide_item)
+        self.assertNotIn("series", guide_item)
 
 
 if __name__ == "__main__":

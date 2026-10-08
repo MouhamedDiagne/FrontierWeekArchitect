@@ -1,0 +1,4 @@
+# Interface locale ; version minimale correspondant aux composants vérifiés.
+streamlit>=1.65,<2
+requests>=2.31,<3
+pandas>=2.0,<3

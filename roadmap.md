@@ -33,8 +33,8 @@
     * General
 
       * detect language method implemented before Text Analysis tools.
-      * detailed knowledge about the set of softwares concerned by the project and their associated services. --> **knowledge.py** 
-      * implement conversation 
+      * detailed knowledge about the set of softwares concerned by the project and their associated services. --> **knowledge.py**
+      * implement conversation
     * 
 
 
@@ -51,7 +51,7 @@ Questions / Detailed Steps :
 * Can tool functions be traced ? --> See after enabling log analytics
 * Look into logs + Bills
 * Integrate Log Insights
-* Ajouter les vraies fonctionnalités de Targetym AI 
+* Ajouter les vraies fonctionnalités de Targetym AI
 * Données à générer artificiellement :
 
   * Dans un Intervalle de temps défini --> Services --> Functionalities --> for each functionality --> define failures and/or successes --> create user feedbacks depending on these.
@@ -65,4 +65,36 @@ Questions / Detailed Steps :
 * Add New Table for issue clusters
 * Build analysis tool/service
 * build a tool to get current date time.
+* Bouton nouvelle conversation, 
+* la barre d'envoi de message non flexible, 
+* les boutons de questions essai qui ne marchent pas.
+* les autres sessions de conversation. 
+* ne pas demander a l'user des dates ou un format ISO. 
+* "visualisation" du rapport non visible et graphiques pas plaisants visuellement, sans légende ou titre. 
+* aussi, mettre chaque schéma à la suite du paragraphe correspondant s'il illustre un des paragraphes du texte. 
+* pour les rapports, ajouter parfois des chiffres pour démontrer une observation. Exemple : "Targetym AI : Retours positifs sur le dossier salarié et l'espace salarié, avec une bonne satisfaction client. (80% de sentiments positifs.)"
+* Parfois, les réponses doivent pouvoir citer quelques uns des raw feedbacks initiaux.	
+
+
+
+* Un peu plus de verbose dans l'attente d'analyse
+* 
+
+
+
+Ordre conseillé
+
+1\. Créer la couche FastAPI autour des services actuels.
+
+2\. Brancher votre frontend Streamlit existant sur cette API : chat et analyse unitaire.
+
+3\. Ajouter la table agil\_insightanalysis et l’enregistrement des snapshots.
+
+4\. Construire le dashboard Streamlit à partir des feedbacks et des snapshots.
+
+5\. Ajouter un script d’analyse planifiée, puis l’héberger avec Azure Function Timer Trigger ou Power Automate.
+
+6\. Ajouter l’ingestion externe par formulaires, avec traçabilité de source et anti-doublon.
+
+7\. Ajouter les visualisations pilotées par l’agent, sur la base d’un VisualizationSpec sécurisé.
 

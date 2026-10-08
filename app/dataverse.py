@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -13,6 +14,7 @@ from .config import (
     DATAVERSE_CLIENT_ID,
     DATAVERSE_CLIENT_SECRET,
     DATAVERSE_FEEDBACK_TABLE,
+    DATAVERSE_INSIGHT_ANALYSIS_TABLE,
     DATAVERSE_TENANT_ID,
     DATAVERSE_URL,
 )
@@ -20,6 +22,7 @@ from .errors import _log_error
 from .models import (
     FeedbackAnalysisResult,
     FeedbackInsightsFilters,
+    FeedbackInsightsSnapshot,
     FeedbackRecordForInsights,
     FeedbackType,
     ProblemCategory,
@@ -34,6 +37,10 @@ class DataversePersistenceError(RuntimeError):
 
 class DataverseInsightsReadError(RuntimeError):
     """Raised when feedback records cannot safely be read for insights."""
+
+
+class DataverseInsightsPersistenceError(RuntimeError):
+    """Raised when a completed insights snapshot cannot be saved."""
 
 
 # These labels must match the options configured in the Dataverse Choice columns.
@@ -83,6 +90,16 @@ class FeedbackReader(Protocol):
         self,
         filters: FeedbackInsightsFilters,
     ) -> list[FeedbackRecordForInsights]:
+        ...
+
+
+class InsightsSnapshotRepository(Protocol):
+    """Persistence boundary for immutable POC historical-analysis snapshots."""
+
+    def save_snapshot(self, *, snapshot: FeedbackInsightsSnapshot) -> str:
+        ...
+
+    def latest_snapshot(self) -> FeedbackInsightsSnapshot | None:
         ...
 
 @dataclass(frozen=True)
@@ -258,7 +275,6 @@ class DataverseFeedbackRepository:
             f"{columns.received_at} ge {cls._to_utc_iso8601(filters.start_date)}",
             f"{columns.received_at} lt {cls._to_utc_iso8601(filters.end_date)}",
         ]
-        print(conditions)
         if filters.software_id is not None:
             conditions.append(
                 f"{columns.software_id} eq '{cls._odata_escape(filters.software_id)}'"
@@ -267,16 +283,6 @@ class DataverseFeedbackRepository:
             conditions.append(
                 f"{columns.functionality} eq "
                 f"'{cls._odata_escape(filters.functionality_id)}'"
-            )
-        if filters.sentiment is not None:
-            conditions.append(
-                f"{columns.sentiment} eq "
-                f"'{cls._odata_escape(filters.sentiment)}'"
-            )
-        if filters.feedback_type is not None:
-            conditions.append(
-                f"{columns.feedback_type} eq "
-                f"'{cls._odata_escape(filters.feedback_type)}'"
             )
         return " and ".join(conditions)
 
@@ -509,4 +515,216 @@ class DataverseFeedbackRepository:
                 raise
             raise DataverseInsightsReadError(
                 "Feedback records could not be read from Dataverse."
+            ) from error
+
+
+_INSIGHT_SNAPSHOT_JSON_MAX_LENGTH = 1_000_000
+
+
+@dataclass(frozen=True)
+class DataverseInsightAnalysisColumnMap:
+    """Physical columns for the separate, immutable insight-analysis table."""
+
+    name: str = "agil_agilname"
+    analysis_reference: str = "agil_analysisreference"
+    generated_at: str = "agil_generatedat"
+    source: str = "agil_source"
+    period_start: str = "agil_periodstart"
+    period_end: str = "agil_periodend"
+    comparison_start: str = "agil_comparisonstart"
+    comparison_end: str = "agil_comparisonend"
+    software_id: str = "agil_softwareid"
+    functionality_id: str = "agil_functionalityid"
+    audience_profile: str = "agil_audienceprofile"
+    total_feedbacks: str = "agil_totalfeedbacks"
+    clustered_feedbacks: str = "agil_clusteredfeedbacks"
+    cluster_count: str = "agil_clustercount"
+    insights_json: str = "agil_insightsjson"
+    audience_report_json: str = "agil_audiencereportsjson"
+    schema_version: str = "agil_schemaversion"
+
+
+class DataverseInsightAnalysisRepository:
+    """Store and retrieve POC analysis snapshots without altering feedback rows."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        table_logical_name: str,
+        column_map: DataverseInsightAnalysisColumnMap | None = None,
+        verbose: bool = True,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._table_logical_name = table_logical_name
+        self._client_secret = client_secret
+        self._columns = column_map or DataverseInsightAnalysisColumnMap()
+        self._credential = ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        self._verbose = verbose
+
+    @classmethod
+    def from_environment(
+        cls,
+        *,
+        verbose: bool = True,
+    ) -> "DataverseInsightAnalysisRepository":
+        values = {
+            "DATAVERSE_URL": DATAVERSE_URL,
+            "DATAVERSE_TENANT_ID": DATAVERSE_TENANT_ID,
+            "DATAVERSE_CLIENT_ID": DATAVERSE_CLIENT_ID,
+            "DATAVERSE_CLIENT_SECRET": DATAVERSE_CLIENT_SECRET,
+            "DATAVERSE_INSIGHT_ANALYSIS_TABLE": DATAVERSE_INSIGHT_ANALYSIS_TABLE,
+        }
+        missing = [name for name, value in values.items() if not value]
+        if missing:
+            raise RuntimeError(
+                f"Dataverse insight-analysis configuration missing: {', '.join(missing)}."
+            )
+        return cls(
+            base_url=str(DATAVERSE_URL),
+            tenant_id=str(DATAVERSE_TENANT_ID),
+            client_id=str(DATAVERSE_CLIENT_ID),
+            client_secret=str(DATAVERSE_CLIENT_SECRET),
+            table_logical_name=str(DATAVERSE_INSIGHT_ANALYSIS_TABLE),
+            verbose=verbose,
+        )
+
+    @staticmethod
+    def _to_utc_iso8601(value: datetime) -> str:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Dataverse timestamps must include a timezone.")
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _record_value(record: Any, column: str) -> Any:
+        getter = getattr(record, "get", None)
+        if not callable(getter):
+            raise TypeError("Dataverse returned a record without mapping access.")
+        return getter(column)
+
+    @staticmethod
+    def _serialized_snapshot_values(
+        snapshot: FeedbackInsightsSnapshot,
+    ) -> tuple[str, str]:
+        insights_json = snapshot.insights.model_dump_json()
+        audience_report_json = snapshot.audience_report.model_dump_json()
+        if len(insights_json) > _INSIGHT_SNAPSHOT_JSON_MAX_LENGTH:
+            raise ValueError("The insights snapshot exceeds the Dataverse text limit.")
+        if len(audience_report_json) > _INSIGHT_SNAPSHOT_JSON_MAX_LENGTH:
+            raise ValueError("The audience report exceeds the Dataverse text limit.")
+        return insights_json, audience_report_json
+
+    def save_snapshot(self, *, snapshot: FeedbackInsightsSnapshot) -> str:
+        """Create one immutable snapshot after a successful historical analysis."""
+
+        try:
+            snapshot = FeedbackInsightsSnapshot.model_validate(snapshot)
+            columns = self._columns
+            request = snapshot.insights.request
+            insights_json, audience_report_json = self._serialized_snapshot_values(snapshot)
+            generated_at = self._to_utc_iso8601(snapshot.generated_at)
+            payload: dict[str, object] = {
+                columns.name: f"Insights {generated_at}",
+                columns.analysis_reference: f"insights-{uuid4()}",
+                columns.generated_at: generated_at,
+                columns.source: snapshot.source.value,
+                columns.period_start: self._to_utc_iso8601(request.start_date),
+                columns.period_end: self._to_utc_iso8601(request.end_date),
+                columns.audience_profile: snapshot.audience_report.profile.value,
+                columns.total_feedbacks: snapshot.insights.total_feedbacks,
+                columns.clustered_feedbacks: snapshot.insights.clustered_feedbacks,
+                columns.cluster_count: len(snapshot.insights.clusters),
+                columns.insights_json: insights_json,
+                columns.audience_report_json: audience_report_json,
+                columns.schema_version: 1,
+            }
+            if request.comparison_start_date is not None:
+                payload[columns.comparison_start] = self._to_utc_iso8601(
+                    request.comparison_start_date
+                )
+            if request.comparison_end_date is not None:
+                payload[columns.comparison_end] = self._to_utc_iso8601(
+                    request.comparison_end_date
+                )
+            if request.software_id is not None:
+                payload[columns.software_id] = request.software_id
+            if request.functionality_id is not None:
+                payload[columns.functionality_id] = request.functionality_id
+
+            _log(
+                "persistence",
+                "Creating the insight-analysis snapshot in Dataverse.",
+                verbose=self._verbose,
+            )
+            with DataverseClient(
+                base_url=self._base_url,
+                credential=self._credential,
+            ) as client:
+                record_id = client.records.create(self._table_logical_name, payload)
+            _log(
+                "persistence",
+                f"Dataverse insight-analysis snapshot created: {record_id}.",
+                verbose=self._verbose,
+            )
+            return str(record_id)
+        except Exception as error:
+            _log_error(
+                "dataverse",
+                "insights_snapshot_save_failed",
+                error,
+                sensitive_values=(self._client_secret,),
+            )
+            raise DataverseInsightsPersistenceError(
+                "The insights analysis succeeded but could not be saved to Dataverse."
+            ) from error
+
+    def latest_snapshot(self) -> FeedbackInsightsSnapshot | None:
+        """Return the most recent immutable snapshot, or None when none exists."""
+
+        try:
+            columns = self._columns
+            with DataverseClient(
+                base_url=self._base_url,
+                credential=self._credential,
+            ) as client:
+                records = list(
+                    client.records.list(
+                        self._table_logical_name,
+                        select=[
+                            columns.generated_at,
+                            columns.source,
+                            columns.insights_json,
+                            columns.audience_report_json,
+                        ],
+                        orderby=[f"{columns.generated_at} desc"],
+                        top=1,
+                    )
+                )
+            if not records:
+                return None
+            record = records[0]
+            return FeedbackInsightsSnapshot(
+                generated_at=self._record_value(record, columns.generated_at),
+                source=self._record_value(record, columns.source),
+                insights=json.loads(self._record_value(record, columns.insights_json)),
+                audience_report=json.loads(
+                    self._record_value(record, columns.audience_report_json)
+                ),
+            )
+        except Exception as error:
+            _log_error(
+                "dataverse",
+                "insights_snapshot_read_failed",
+                error,
+                sensitive_values=(self._client_secret,),
+            )
+            raise DataverseInsightsPersistenceError(
+                "The latest insights snapshot could not be read from Dataverse."
             ) from error

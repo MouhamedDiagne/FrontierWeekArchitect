@@ -19,10 +19,13 @@ from .errors import _error_was_logged, _log_error, _safe_error_detail
 from .models import (
     ClusterPeriodMetrics,
     ClusterPriority,
+    FeedbackInsightsMetrics,
     FeedbackInsightsDataQuality,
     FeedbackInsightsRequest,
     FeedbackInsightsResult,
     FeedbackRecordForInsights,
+    InsightPeriodMetrics,
+    MAX_INSIGHT_METRIC_BREAKDOWN_ITEMS,
     TemporaryFeedbackCluster,
 )
 from .utils import _log
@@ -30,6 +33,18 @@ from .utils import _log
 
 class FeedbackInsightsError(RuntimeError):
     """Raised when a requested historical feedback analysis cannot be produced."""
+
+
+def _bounded_breakdown(values: Counter[str | None]) -> dict[str, int]:
+    """Serialize a deterministic top breakdown without copying arbitrary rows."""
+
+    items = [
+        (" ".join(label.split()), count)
+        for label, count in values.items()
+        if isinstance(label, str) and label.strip() and count > 0
+    ]
+    items.sort(key=lambda item: (-item[1], item[0].casefold()))
+    return dict(items[:MAX_INSIGHT_METRIC_BREAKDOWN_ITEMS])
 
 
 class ClusterLabel(BaseModel):
@@ -79,7 +94,8 @@ class OpenAIClusterLabelProvider:
         return """
 You name an already-calculated cluster of customer feedback. Membership,
 counts, sentiment, and category are authoritative and must not be changed.
-Use only the supplied representative summaries; do not infer a root cause,
+Use only the supplied representative evidence excerpts; inspect their source
+and do not present a redacted raw fallback as a model-generated summary. Do not infer a root cause,
 solution, urgency, or business impact. Do not include personal data, customer
 names, raw comments, or unsupported facts.
 
@@ -114,12 +130,17 @@ feedback issue or need. Keep the title concise and the description factual.
                 else None
             ),
             "member_count": cluster.member_count,
-            "representative_summaries": [
-                example.feedback_summary
+            "representative_evidence": [
+                {
+                    "text": example.evidence_text,
+                    "source": example.source.value,
+                }
                 for example in cluster.representative_examples
             ],
         }
-        sensitive_values = tuple(context["representative_summaries"])
+        sensitive_values = tuple(
+            item["text"] for item in context["representative_evidence"]
+        )
         try:
             _log(
                 "insights",
@@ -274,6 +295,14 @@ class FeedbackInsightsService:
                 ),
                 clusters=clusters,
                 data_quality=quality,
+                metrics=FeedbackInsightsMetrics(
+                    current=self._period_aggregate_metrics(current_records),
+                    comparison=(
+                        self._period_aggregate_metrics(previous_records)
+                        if previous_filters is not None
+                        else None
+                    ),
+                ),
                 limitations=limitations,
             )
             self._log(
@@ -301,6 +330,40 @@ class FeedbackInsightsService:
             records_with_summary=sources["summary"],
             records_using_raw_fallback=sources["raw_fallback"],
             records_without_usable_representation=sources["unusable"],
+        )
+
+    @staticmethod
+    def _period_aggregate_metrics(
+        records: list[FeedbackRecordForInsights],
+    ) -> InsightPeriodMetrics:
+        """Return bounded, non-identifying aggregate facts for one period."""
+
+        sentiments = Counter(
+            record.sentiment.value
+            for record in records
+            if record.sentiment is not None
+        )
+        feedback_types = Counter(
+            record.feedback_type.value
+            for record in records
+            if record.feedback_type is not None
+        )
+        problem_categories = Counter(
+            record.problem_category.value
+            for record in records
+            if record.problem_category is not None
+        )
+        functionality_names = Counter(
+            (record.primary_functionality_name or record.primary_functionality)
+            for record in records
+            if (record.primary_functionality_name or record.primary_functionality)
+        )
+        return InsightPeriodMetrics(
+            feedback_count=len(records),
+            sentiment_distribution=_bounded_breakdown(sentiments),
+            feedback_type_distribution=_bounded_breakdown(feedback_types),
+            problem_category_distribution=_bounded_breakdown(problem_categories),
+            top_functionality_distribution=_bounded_breakdown(functionality_names),
         )
 
     def _with_period_metrics_and_priority(
