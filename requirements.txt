@@ -12,6 +12,7 @@ PowerPlatform-Dataverse-Client
 pandas>=2.0.0
 fastapi>=0.115,<0.120
 uvicorn[standard]>=0.30,<1
+gunicorn>=23,<24
 # 
 # google-genai
 # pydantic>=2

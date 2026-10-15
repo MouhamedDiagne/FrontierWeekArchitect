@@ -32,6 +32,12 @@ APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv(
     "APPLICATIONINSIGHTS_CONNECTION_STRING"
 )
 
+# The browser never calls FastAPI directly: the deployed Streamlit service
+# authenticates its server-side requests with this shared POC secret.  Keep it
+# unset locally unless endpoint authentication is explicitly being tested.
+APP_ENVIRONMENT = os.getenv("APP_ENVIRONMENT", "development").strip().casefold()
+API_ACCESS_TOKEN = os.getenv("API_ACCESS_TOKEN", "")
+
 
 def _positive_int_env(name: str, default: int) -> int:
     raw_value = os.getenv(name)

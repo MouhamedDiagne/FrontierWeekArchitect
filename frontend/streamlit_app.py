@@ -20,6 +20,7 @@ from presentation import build_chart_spec, display_label, display_value, render_
 
 
 API_BASE_URL = os.getenv("FEEDBACK_API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_ACCESS_TOKEN = os.getenv("FEEDBACK_API_TOKEN", "")
 API_TIMEOUT_SECONDS = 120
 _BLOCK_IDS = count()
 QUICK_MESSAGE_PAYLOADS = (
@@ -369,6 +370,11 @@ def _api_request(
             method,
             f"{API_BASE_URL}{path}",
             json=payload,
+            headers=(
+                {"X-Feedback-API-Key": API_ACCESS_TOKEN}
+                if API_ACCESS_TOKEN
+                else None
+            ),
             timeout=API_TIMEOUT_SECONDS,
         )
     except requests.RequestException as error:

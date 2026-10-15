@@ -17,15 +17,16 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from secrets import compare_digest
 from threading import RLock
 from typing import Protocol, cast
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .agents import FeedbackAnalyzerAgent
-from .config import DATAVERSE_INSIGHT_ANALYSIS_TABLE
+from .config import API_ACCESS_TOKEN, APP_ENVIRONMENT, DATAVERSE_INSIGHT_ANALYSIS_TABLE
 from .conversation import ConversationSession
 from .dataverse import (
     DataverseFeedbackRepository,
@@ -312,13 +313,46 @@ def _raise_service_unavailable(error: Exception, *, operation: str) -> None:
 def create_app(
     *,
     runtime_factory: Callable[[], ConversationRuntime] | None = None,
+    api_access_token: str | None = None,
+    environment: str | None = None,
 ) -> FastAPI:
-    """Build the API application, with an injectable runtime for local tests."""
+    """Build the API application, with an injectable runtime for local tests.
+
+    A production App Service must configure ``API_ACCESS_TOKEN``.  Streamlit
+    sends it only from its server process, never to the visitor's browser.
+    """
 
     selected_runtime_factory = runtime_factory or (lambda: FeedbackAgentRuntime())
+    selected_api_access_token = (
+        API_ACCESS_TOKEN if api_access_token is None else api_access_token
+    )
+    selected_environment = APP_ENVIRONMENT if environment is None else environment.casefold()
+
+    def require_api_access(
+        x_feedback_api_key: str | None = Header(
+            default=None,
+            alias="X-Feedback-API-Key",
+        ),
+    ) -> None:
+        """Reject direct calls unless the optional shared POC secret matches."""
+
+        if not selected_api_access_token:
+            return
+        if x_feedback_api_key is None or not compare_digest(
+            x_feedback_api_key,
+            selected_api_access_token,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid API access token is required.",
+            )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if selected_environment == "production" and not selected_api_access_token:
+            raise RuntimeError(
+                "API_ACCESS_TOKEN must be configured when APP_ENVIRONMENT is production."
+            )
         runtime = selected_runtime_factory()
         try:
             runtime.start()
@@ -349,6 +383,7 @@ def create_app(
         "/api/conversations",
         response_model=ConversationCreated,
         status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_api_access)],
     )
     def create_conversation(request: Request) -> ConversationCreated:
         try:
@@ -359,6 +394,7 @@ def create_app(
     @app.post(
         "/api/conversations/{session_id}/messages",
         response_model=ConversationTurnResult,
+        dependencies=[Depends(require_api_access)],
     )
     def send_message(
         session_id: str,
@@ -378,6 +414,7 @@ def create_app(
     @app.delete(
         "/api/conversations/{session_id}",
         status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_api_access)],
     )
     def close_conversation(session_id: str, request: Request) -> Response:
         try:
@@ -395,6 +432,7 @@ def create_app(
         "/api/feedbacks",
         response_model=FeedbackSubmissionResult,
         status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_api_access)],
     )
     def submit_feedback(
         payload: FeedbackSubmission,
@@ -402,9 +440,9 @@ def create_app(
     ) -> FeedbackSubmissionResult:
         """Receive one explicit feedback submission from a local POC source.
 
-        This endpoint is deliberately localhost-only with the API server.  It
-        is not an Internet-facing form endpoint until authentication,
-        idempotency, and source traceability are separately implemented.
+        The POC protects this endpoint with the internal Streamlit-to-API
+        token.  It is still not a public integration endpoint: idempotency
+        and source traceability remain future work.
         """
 
         try:
@@ -420,6 +458,7 @@ def create_app(
     @app.get(
         "/api/dashboard/latest",
         response_model=LatestInsightsDashboard,
+        dependencies=[Depends(require_api_access)],
     )
     def latest_insights_dashboard(request: Request) -> LatestInsightsDashboard:
         """Return the latest saved snapshot without re-running clustering."""

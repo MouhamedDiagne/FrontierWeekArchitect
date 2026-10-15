@@ -178,6 +178,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["analysis"]["sentiment"], "negative")
         self.assertEqual(self.runtime.messages[0][0], session_id)
 
+    def test_protects_api_routes_when_an_access_token_is_configured(self):
+        runtime = FakeRuntime()
+        app = create_app(
+            runtime_factory=lambda: runtime,
+            api_access_token="test-token",
+            environment="production",
+        )
+        with TestClient(app) as protected_client:
+            self.assertEqual(protected_client.get("/health").status_code, 200)
+            self.assertEqual(
+                protected_client.post("/api/conversations").status_code,
+                401,
+            )
+            self.assertEqual(
+                protected_client.post(
+                    "/api/conversations",
+                    headers={"X-Feedback-API-Key": "wrong-token"},
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                protected_client.post(
+                    "/api/conversations",
+                    headers={"X-Feedback-API-Key": "test-token"},
+                ).status_code,
+                201,
+            )
+
+    def test_production_api_requires_an_access_token_during_startup(self):
+        app = create_app(
+            runtime_factory=FakeRuntime,
+            api_access_token="",
+            environment="production",
+        )
+        with self.assertRaises(RuntimeError):
+            with TestClient(app):
+                pass
+
     def test_rejects_unknown_or_closed_conversation(self):
         unknown = self.client.post(
             "/api/conversations/unknown/messages",
