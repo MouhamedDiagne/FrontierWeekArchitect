@@ -145,3 +145,32 @@ y compris après actualisation de la connexion et tentative d'accès à
 
 Aucune nouvelle configuration Azure ni modification de table Dataverse n'est
 requise pour cette étape.
+
+## Extension du 15 octobre 2026 — formulaire direct de feedback
+
+La navigation de `frontend/streamlit_app.py` contient désormais **Saisir un
+feedback**. Cette vue ne réutilise ni le composeur ni les sessions de chat :
+elle appelle explicitement `POST /api/feedbacks`, qui analyse puis enregistre
+le commentaire dans Dataverse avec le pipeline de référence.
+
+Le formulaire comprend le logiciel concerné, un texte de 1 à 4 000 caractères,
+et deux horodatages UTC optionnels. `received_at` peut être imposé seul ;
+`analyzed_at` exige aussi `received_at` et ne peut pas le précéder. Sans valeur
+imposée, le backend conserve son comportement : heure UTC de réception au début
+du traitement, puis heure UTC d'analyse juste avant la persistance.
+
+La validation est volontairement présente dans deux couches : le formulaire
+affiche l'erreur avant tout appel HTTP, et `FeedbackSubmission` dans
+`app/api.py` applique la même règle pour les appels directs. Le runtime transmet
+ensuite les deux valeurs normalisées à
+`FeedbackAnalyzerAgent.analyze_and_save_feedback()`, qui les remet à
+`DataverseFeedbackRepository.save()`. Aucune colonne Dataverse supplémentaire
+n'est requise si `agil_receivedat` et `agil_analyzedat` sont déjà présentes dans
+la table configurée.
+
+Les tests ciblés couvrent l'envoi du formulaire avec et sans dates imposées,
+le rejet d'une date d'analyse isolée ou antérieure, la normalisation UTC dans
+l'API, et la persistance. Ils n'exécutent pas d'appel Azure ou Dataverse réel.
+Après mise à jour, redémarrer l'API et Streamlit ; conserver l'application sur
+`127.0.0.1`, car ce POC ne possède ni authentification ni idempotence de
+soumission.

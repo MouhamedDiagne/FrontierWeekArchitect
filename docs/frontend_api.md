@@ -27,10 +27,12 @@ Le schéma de réponse d'un message est le modèle existant
 `feedback_record_id`, `insights`, `audience_report`, `insight_snapshot_id` et,
 pour un rapport historique, `visualizations`.
 
-`POST /api/feedbacks` accepte `software_id`, `feedback` et optionnellement
-`received_at` (ISO 8601 avec fuseau horaire). Il renvoie une analyse structurée
-et `feedback_record_id`. Cette route est destinée à la future couche de
-connecteurs, mais reste strictement locale et non authentifiée dans ce POC.
+`POST /api/feedbacks` accepte `software_id`, `feedback` et, en option,
+`received_at` et `analyzed_at` (ISO 8601 avec fuseau horaire). Il renvoie une
+analyse structurée et `feedback_record_id`. `received_at` peut être imposé
+seul ; `analyzed_at` ne peut être imposé que si `received_at` l'est aussi, et
+doit lui être postérieur ou égal. Cette route est destinée à la future couche
+de connecteurs, mais reste strictement locale et non authentifiée dans ce POC.
 
 `GET /api/dashboard/latest` retourne le snapshot le plus récent ainsi qu'un
 contrat de visualisation borné. Les types permis sont des KPI, graphiques en
@@ -104,7 +106,10 @@ natifs, sans interpréter de code généré par le LLM.
 6. Lorsque la table de snapshots est configurée, demander un rapport historique
    puis ouvrir **Dashboard** : le dashboard doit afficher le dernier snapshot
    sans effectuer de nouvel appel d'embeddings.
-7. Tester, si nécessaire, la soumission technique locale avec `POST
+7. Ouvrir **Saisir un feedback**, sélectionner le logiciel, saisir le retour
+   puis envoyer. Les horodatages sont facultatifs ; s'ils doivent être imposés,
+   les saisir en UTC et imposer `received_at` avant `analyzed_at`.
+8. Tester, si nécessaire, la soumission technique locale avec `POST
    /api/feedbacks`; consulter `external_feedback_ingestion.md` avant de relier
    un formulaire.
 

@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stderr
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -607,6 +607,7 @@ class FeedbackAnalysisTests(unittest.TestCase):
             model_deployment_name=agent_module.MODEL_DEPLOYMENT_NAME,
             verbose=False,
         )
+
         self.assertEqual(len(agent.openai.responses.calls), 2)
         self.assertEqual(
             [call["conversation"] for call in agent.openai.responses.calls],
@@ -615,6 +616,39 @@ class FeedbackAnalysisTests(unittest.TestCase):
         tool_output = json.loads(agent.openai.responses.calls[1]["input"][0]["output"])
         self.assertEqual(tool_output, expected_analysis_result().model_dump(mode="json"))
         self.assertEqual(agent.openai.conversations.deleted, [])
+
+    def test_direct_submission_rejects_analyzed_time_before_received_time(self) -> None:
+        agent, repository = make_ready_agent([])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "analyzed_at must be greater than or equal to received_at",
+        ):
+            agent.analyze_and_save_feedback(
+                feedback="The sales pipeline is broken.",
+                software_id="dealym_crm",
+                received_at=datetime(2026, 10, 6, 14, 30, tzinfo=timezone.utc),
+                analyzed_at=datetime(2026, 10, 6, 14, 29, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(repository.calls, [])
+        self.assertEqual(agent.openai.responses.calls, [])
+
+    def test_direct_submission_rejects_analyzed_time_without_received_time(self) -> None:
+        agent, repository = make_ready_agent([])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "received_at must be provided when analyzed_at is provided",
+        ):
+            agent.analyze_and_save_feedback(
+                feedback="The sales pipeline is broken.",
+                software_id="dealym_crm",
+                analyzed_at=datetime(2026, 10, 6, 14, 30, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(repository.calls, [])
+        self.assertEqual(agent.openai.responses.calls, [])
 
     def test_conversation_can_use_product_context_from_an_earlier_user_turn(self) -> None:
         feedback = "HR Reporting is excellent."
@@ -750,7 +784,9 @@ class FeedbackAnalysisTests(unittest.TestCase):
 
     def test_direct_submission_uses_the_same_analysis_and_persistence_path(self) -> None:
         feedback = "The sales pipeline is broken."
-        received_at = datetime(2026, 10, 6, 14, 30, tzinfo=timezone.utc)
+        source_timezone = timezone(timedelta(hours=2))
+        received_at = datetime(2026, 10, 6, 16, 30, tzinfo=source_timezone)
+        analyzed_at = datetime(2026, 10, 6, 16, 35, tzinfo=source_timezone)
         agent, repository = make_ready_agent([])
 
         with patch.object(
@@ -762,13 +798,21 @@ class FeedbackAnalysisTests(unittest.TestCase):
                 feedback=feedback,
                 software_id="dealym_crm",
                 received_at=received_at,
+                analyzed_at=analyzed_at,
             )
 
         self.assertEqual(result.analysis, expected_analysis_result())
         self.assertEqual(result.feedback_record_id, "record-1")
         self.assertEqual(len(repository.calls), 1)
         self.assertEqual(repository.calls[0]["raw_comment"], feedback)
-        self.assertEqual(repository.calls[0]["received_at"], received_at)
+        self.assertEqual(
+            repository.calls[0]["received_at"],
+            datetime(2026, 10, 6, 14, 30, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            repository.calls[0]["analyzed_at"],
+            datetime(2026, 10, 6, 14, 35, tzinfo=timezone.utc),
+        )
         analyze_feedback.assert_called_once_with(
             feedback,
             software_id="dealym_crm",

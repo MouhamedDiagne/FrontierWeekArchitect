@@ -1,6 +1,7 @@
 """Exercise report rendering and session navigation without remote services."""
 
 import importlib.util
+from datetime import date, time
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -88,6 +89,109 @@ class FrontendAppTests(unittest.TestCase):
         captions = " ".join(item.value for item in self.app.caption)
         self.assertIn("08/10/2026 à 07:59 UTC", captions)
         self.assertIn("08/09/2026 → 08/10/2026 (fin exclue)", captions)
+
+    def test_direct_feedback_form_submits_optional_utc_timestamps_without_a_conversation(self):
+        self.app.button(key="main_feedback_submission_navigation").click().run(timeout=15)
+        self.assertFalse(self.app.exception)
+        self.assertEqual(self.app.session_state["active_view"], "submission")
+
+        self.app.selectbox(key="feedback_submission_software").select("dealym_crm")
+        self.app.text_area(key="feedback_submission_text").input(
+            "Le pipeline commercial ne se met plus à jour."
+        )
+        self.app.checkbox(key="feedback_submission_impose_received_at").check()
+        self.app.checkbox(key="feedback_submission_impose_analyzed_at").check()
+        self.app.date_input(key="feedback_submission_received_date").set_value(
+            date(2026, 10, 1)
+        )
+        self.app.time_input(key="feedback_submission_received_time").set_value(
+            time(9, 15)
+        )
+        self.app.date_input(key="feedback_submission_analyzed_date").set_value(
+            date(2026, 10, 1)
+        )
+        self.app.time_input(key="feedback_submission_analyzed_time").set_value(
+            time(9, 20)
+        )
+
+        submission = {
+            "analysis": {
+                "software": {"id": "dealym_crm", "name": "Dealym CRM"},
+                "sentiment": "negative",
+                "percentage": 0.9,
+                "language": "fr",
+                "feedback_type": "issue_report",
+                "feedback_summary": "Le pipeline commercial ne se met plus à jour.",
+                "primary_functionality": None,
+                "problem_category": "data_quality_reporting",
+            },
+            "feedback_record_id": "feedback-submission-1",
+        }
+        with patch("requests.request", return_value=response(submission)) as request:
+            self.app.button(key="feedback_submission_submit").click().run(timeout=15)
+
+        self.assertFalse(self.app.exception)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0], "POST")
+        self.assertTrue(request.call_args.args[1].endswith("/api/feedbacks"))
+        self.assertEqual(
+            request.call_args.kwargs["json"],
+            {
+                "feedback": "Le pipeline commercial ne se met plus à jour.",
+                "software_id": "dealym_crm",
+                "received_at": "2026-10-01T09:15:00Z",
+                "analyzed_at": "2026-10-01T09:20:00Z",
+            },
+        )
+        captions = " ".join(item.value for item in self.app.caption)
+        self.assertIn("feedback-submission-1", captions)
+
+    def test_direct_feedback_form_leaves_timestamps_to_backend_when_not_imposed(self):
+        self.app.button(key="main_feedback_submission_navigation").click().run(timeout=15)
+        self.app.text_area(key="feedback_submission_text").input(
+            "Le reporting RH est très utile."
+        )
+        submission = {
+            "analysis": {
+                "software": {"id": "targetym_ai", "name": "Targetym AI"},
+                "sentiment": "positive",
+                "percentage": 1.0,
+                "language": "fr",
+                "feedback_type": "positive_feedback",
+                "feedback_summary": "Le reporting RH est très utile.",
+                "primary_functionality": None,
+                "problem_category": None,
+            },
+            "feedback_record_id": "feedback-submission-2",
+        }
+        with patch("requests.request", return_value=response(submission)) as request:
+            self.app.button(key="feedback_submission_submit").click().run(timeout=15)
+
+        self.assertFalse(self.app.exception)
+        self.assertEqual(
+            request.call_args.kwargs["json"],
+            {
+                "feedback": "Le reporting RH est très utile.",
+                "software_id": "targetym_ai",
+            },
+        )
+
+    def test_direct_feedback_form_rejects_analyzed_timestamp_without_received_timestamp(self):
+        self.app.button(key="main_feedback_submission_navigation").click().run(timeout=15)
+        self.app.text_area(key="feedback_submission_text").input(
+            "Le reporting ne se charge plus."
+        )
+        self.app.checkbox(key="feedback_submission_impose_analyzed_at").check()
+
+        with patch("requests.request") as request:
+            self.app.button(key="feedback_submission_submit").click().run(timeout=15)
+
+        self.assertFalse(self.app.exception)
+        request.assert_not_called()
+        self.assertIn(
+            "imposez aussi la date de réception",
+            " ".join(item.value for item in self.app.error),
+        )
 
 
 if __name__ == "__main__":

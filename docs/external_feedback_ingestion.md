@@ -71,10 +71,13 @@ Le corps JSON accepte exclusivement les propriétés suivantes :
 | `software_id` | chaîne | Oui | Entre 1 et 80 caractères ; les espaces externes sont supprimés et la valeur est normalisée en minuscules. Elle doit correspondre à un logiciel connu du catalogue du projet lors de l'analyse. |
 | `feedback` | chaîne | Oui | Entre 1 et 4 000 caractères ; les espaces externes sont supprimés ; une chaîne vide est refusée. |
 | `received_at` | date-heure ISO 8601 | Non | Doit comporter un fuseau, par exemple `Z` ou `+00:00`. Elle est convertie en UTC. Sans valeur, le backend utilise l'heure UTC de réception. |
+| `analyzed_at` | date-heure ISO 8601 | Non | Doit comporter un fuseau et être convertissable en UTC. Il ne peut être fourni qu'avec `received_at` et doit lui être postérieur ou égal. Sans valeur, le backend utilise l'heure UTC juste avant l'écriture Dataverse. |
 
 Les champs supplémentaires sont refusés. Une date sans fuseau (par exemple
 `2026-10-07T09:30:00`) est volontairement invalide afin d'éviter une date
-ambigüe dans Dataverse.
+ambigüe dans Dataverse. Une valeur `analyzed_at` sans `received_at`, ou
+antérieure à celle-ci, est également refusée avant tout appel Azure, Foundry ou
+Dataverse.
 
 Exemple :
 
@@ -82,7 +85,8 @@ Exemple :
 {
   "software_id": "targetym_ai",
   "feedback": "Depuis la mise à jour, l'export du rapport Pilotage produit un fichier vide.",
-  "received_at": "2026-10-07T09:30:00Z"
+  "received_at": "2026-10-07T09:30:00Z",
+  "analyzed_at": "2026-10-07T09:31:15Z"
 }
 ```
 
@@ -130,8 +134,11 @@ n'est pas une promesse de classification.
 3. Le runtime appelle
    `FeedbackAnalyzerAgent.analyze_and_save_feedback()` dans `app/agents.py`,
    sans créer de `ConversationSession`.
-4. Cette méthode valide de nouveau `software_id` et `feedback`, normalise
-   `received_at` en UTC, puis exécute directement `analyze_feedback()`.
+4. Cette méthode valide de nouveau `software_id`, `feedback` et la chronologie
+   des dates, normalise les valeurs fournies en UTC, puis exécute directement
+   `analyze_feedback()`. En l'absence de `received_at`, elle prend l'heure UTC
+   de début de traitement ; en l'absence de `analyzed_at`, elle prend l'heure
+   UTC immédiatement avant la sauvegarde.
 5. `analyze_feedback()` applique le pipeline de référence : Azure AI Language
    détecte la langue et le sentiment ; le modèle Foundry extrait la
    fonctionnalité principale, le type de feedback, la catégorie de problème
@@ -158,6 +165,7 @@ $body = @{
     software_id = "targetym_ai"
     feedback = "Depuis la mise à jour, l'export du rapport Pilotage produit un fichier vide."
     received_at = "2026-10-07T09:30:00Z"
+    analyzed_at = "2026-10-07T09:31:15Z"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -174,9 +182,9 @@ Vérifier ensuite que :
 3. une ligne apparaît dans `DATAVERSE_FEEDBACK_TABLE` avec le commentaire, le
    logiciel, les attributs analysés et les dates UTC.
 
-### Horodatage automatique
+### Horodatages automatiques
 
-Pour laisser le backend attribuer l'heure UTC de réception :
+Pour laisser le backend attribuer les deux heures UTC :
 
 ```powershell
 $body = @{
@@ -218,7 +226,7 @@ try {
 | Statut | Situation | Comportement client |
 | --- | --- | --- |
 | `201 Created` | Analyse et écriture Dataverse réussies | Exploiter `analysis` et conserver `feedback_record_id`. |
-| `422 Unprocessable Entity` | JSON, champ, longueur, valeur vide ou `received_at` invalide | Corriger le payload ; aucun appel Azure, Foundry ou Dataverse n'est lancé. |
+| `422 Unprocessable Entity` | JSON, champ, longueur, valeur vide, date sans fuseau, `analyzed_at` sans `received_at`, ou chronologie invalide | Corriger le payload ; aucun appel Azure, Foundry ou Dataverse n'est lancé. |
 | `503 Service Unavailable` | Démarrage incomplet, indisponibilité Foundry/Azure Language/Dataverse, quota, ou autre erreur runtime | Réponse générique : `The feedback service is temporarily unavailable. Please try again.` Consulter les logs du backend ; les détails techniques ne sont pas exposés au client. |
 
 La version POC ne traduit pas encore certains cas en statuts spécialisés : par
@@ -247,6 +255,10 @@ formulaire.
 - Les requêtes sont sérialisées dans le processus pour rester déterministes et
   limiter les collisions du POC. Cette route n'est pas conçue pour un débit de
   production, ni pour absorber du spam ou des pics de formulaire.
+- `received_at` est la date métier utilisée pour filtrer les feedbacks dans les
+  analyses historiques ; `analyzed_at` est une information de traçabilité. Une
+  date fournie par le client ne constitue pas une preuve de l'heure réelle où
+  le modèle a été exécuté.
 
 ## Décisions à prendre avant une vraie intégration de formulaire
 

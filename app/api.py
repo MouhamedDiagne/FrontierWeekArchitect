@@ -16,7 +16,7 @@ from typing import Protocol, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .agents import FeedbackAnalyzerAgent
 from .config import DATAVERSE_INSIGHT_ANALYSIS_TABLE
@@ -75,6 +75,7 @@ class ConversationRuntime(Protocol):
         feedback: str,
         software_id: str,
         received_at: datetime | None,
+        analyzed_at: datetime | None,
     ) -> FeedbackSubmissionResult:
         ...
 
@@ -182,6 +183,7 @@ class FeedbackAgentRuntime:
         feedback: str,
         software_id: str,
         received_at: datetime | None,
+        analyzed_at: datetime | None,
     ) -> FeedbackSubmissionResult:
         """Analyse one explicit submission without creating a chat session."""
 
@@ -194,6 +196,7 @@ class FeedbackAgentRuntime:
                 feedback=feedback,
                 software_id=software_id,
                 received_at=received_at,
+                analyzed_at=analyzed_at,
             )
 
     def latest_insights_snapshot(self) -> FeedbackInsightsSnapshot | None:
@@ -246,15 +249,36 @@ class FeedbackSubmission(FeedbackInput):
     """Validated POC payload accepted from a future form or integration."""
 
     received_at: datetime | None = None
+    analyzed_at: datetime | None = None
 
-    @field_validator("received_at")
+    @field_validator("received_at", "analyzed_at")
     @classmethod
-    def normalize_received_at(cls, value: datetime | None) -> datetime | None:
+    def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("received_at must include a timezone")
+            raise ValueError("timestamp must include a timezone")
         return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def validate_timestamp_order(self) -> "FeedbackSubmission":
+        """Keep explicitly supplied persistence timestamps chronologically valid.
+
+        Historical values remain valid: the form may set either timestamp to
+        any timezone-aware instant.  An explicit analysis timestamp requires
+        an explicit reception timestamp, so the API never pairs a historical
+        analysis with a generated current reception time.
+        """
+
+        if self.analyzed_at is not None and self.received_at is None:
+            raise ValueError("received_at must be provided when analyzed_at is provided")
+        if (
+            self.received_at is not None
+            and self.analyzed_at is not None
+            and self.analyzed_at < self.received_at
+        ):
+            raise ValueError("analyzed_at must be greater than or equal to received_at")
+        return self
 
 
 class LatestInsightsDashboard(BaseModel):
@@ -382,6 +406,7 @@ def create_app(
                 feedback=payload.feedback,
                 software_id=payload.software_id,
                 received_at=payload.received_at,
+                analyzed_at=payload.analyzed_at,
             )
         except Exception as error:
             _raise_service_unavailable(error, operation="feedback_submission")

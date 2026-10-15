@@ -6,7 +6,7 @@ package backend et ne contient aucun identifiant Azure, Foundry ou Dataverse.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from html import escape
 from itertools import count
 import os
@@ -36,6 +36,19 @@ QUICK_MESSAGE_PAYLOADS = (
         "30 derniers jours."
     ),
 )
+
+# The Streamlit application deliberately remains independent from the backend
+# package.  Keep this small presentation mapping aligned with the software IDs
+# in ``knowledge/agiltym_software_catalog.json`` until the local API exposes a
+# read-only catalog endpoint.
+SOFTWARE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("targetym_ai", "Targetym AI"),
+    ("bleom_vie", "Bleom Vie"),
+    ("dealym_crm", "Dealym CRM"),
+    ("ohady_ai", "Ohady AI"),
+)
+SOFTWARE_LABELS = {software_id: name for software_id, name in SOFTWARE_OPTIONS}
+MAX_FEEDBACK_LENGTH = 4_000
 
 
 st.set_page_config(
@@ -312,6 +325,26 @@ def inject_styles(dark_mode: bool) -> None:
         .demo-note {
             text-align: center; color: var(--muted); font-size: .68rem; margin: .75rem 0 0;
         }
+        .submission-intro {
+            background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+            padding: 1rem 1.1rem; margin-bottom: .9rem;
+        }
+        .submission-intro p { color: var(--body); font-size: .88rem; line-height: 1.5; margin: .35rem 0 0; }
+        .submission-intro strong { color: var(--ink); }
+        [data-testid="stForm"] {
+            background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+            padding: 1rem 1.1rem .85rem;
+        }
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stDateInput"] input,
+        [data-testid="stTimeInput"] input {
+            background: var(--surface) !important; color: var(--ink) !important;
+            border-color: var(--line) !important;
+        }
+        [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+            background: var(--accent) !important; color: var(--on-accent) !important;
+            border-color: var(--accent) !important; min-height: 42px !important;
+        }
         @media(max-width: 900px) {
             .block-container { padding: 1rem; }
             h1 { font-size: 1.72rem !important; }
@@ -506,8 +539,14 @@ def _primary_navigation() -> None:
     """Keep navigation and session history in the page, without a sidebar."""
 
     with st.container(key="primary_navigation"):
-        brand, new_conversation_column, dashboard_column, history_column = st.columns(
-            [1.5, 1.45, 1.0, 1.1],
+        (
+            brand,
+            new_conversation_column,
+            submission_column,
+            dashboard_column,
+            history_column,
+        ) = st.columns(
+            [1.25, 1.35, 1.45, 1.0, 1.1],
             vertical_alignment="center",
         )
         with brand:
@@ -521,6 +560,18 @@ def _primary_navigation() -> None:
             ):
                 _start_new_conversation()
                 st.session_state.active_view = "assistant"
+                st.rerun()
+
+        with submission_column:
+            is_submission_view = st.session_state.active_view == "submission"
+            if st.button(
+                "Saisir un feedback",
+                key="main_feedback_submission_navigation",
+                type="primary" if is_submission_view else "secondary",
+                width="stretch",
+            ):
+                st.session_state.pending_message = None
+                st.session_state.active_view = "submission"
                 st.rerun()
 
         with dashboard_column:
@@ -588,6 +639,61 @@ def _queue_message(message: str) -> None:
     normalized = message.strip()
     if normalized:
         st.session_state.pending_message = normalized
+
+
+def _utc_timestamp(day: date, clock: time) -> datetime:
+    """Combine form date/time controls into the UTC API representation."""
+
+    return datetime.combine(day, clock, tzinfo=timezone.utc)
+
+
+def _utc_iso8601(value: datetime) -> str:
+    """Serialize an aware timestamp in the form accepted by the local API."""
+
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _feedback_submission_payload(
+    *,
+    feedback: str,
+    software_id: str,
+    received_at: datetime | None = None,
+    analyzed_at: datetime | None = None,
+) -> dict[str, str]:
+    """Validate and build the explicit, form-only feedback submission payload.
+
+    Omitting either timestamp is intentional: the backend then applies its
+    default timestamp.  The browser never invents a local timezone; manually
+    entered timestamps are always labelled and sent as UTC.
+    """
+
+    normalized_feedback = feedback.strip()
+    if not normalized_feedback:
+        raise ValueError("Saisissez un feedback client avant de l'envoyer.")
+    if not software_id:
+        raise ValueError("Sélectionnez le logiciel concerné.")
+    if analyzed_at is not None and received_at is None:
+        raise ValueError(
+            "Pour imposer la date d'analyse, imposez aussi la date de réception."
+        )
+    if (
+        received_at is not None
+        and analyzed_at is not None
+        and analyzed_at < received_at
+    ):
+        raise ValueError(
+            "La date d'analyse ne peut pas être antérieure à la date de réception."
+        )
+
+    payload = {
+        "feedback": normalized_feedback,
+        "software_id": software_id,
+    }
+    if received_at is not None:
+        payload["received_at"] = _utc_iso8601(received_at)
+    if analyzed_at is not None:
+        payload["analyzed_at"] = _utc_iso8601(analyzed_at)
+    return payload
 
 
 def _ensure_conversation() -> str:
@@ -989,6 +1095,145 @@ def _live_user_message(message: dict[str, object]) -> None:
         )
 
 
+def _feedback_submission_view() -> None:
+    """Render the direct feedback form without starting a conversation.
+
+    The form uses the dedicated local ingestion endpoint.  It is deliberately
+    separate from the chat: an explicit form submission always asks the
+    backend to analyse and persist that feedback, rather than asking the model
+    whether analysis is needed.
+    """
+
+    st.markdown(
+        """
+        <div class="topbar">
+          <div>
+            <div class="eyebrow">Agiltym · Collecte de feedback</div>
+            <h1>Ajouter un feedback client</h1>
+            <div class="topbar-title">Analysez et enregistrez directement un retour dans la base de données.</div>
+          </div>
+          <div class="status-pill"><span class="status-dot"></span> Formulaire</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="submission-intro">
+          <strong>Envoi direct</strong>
+          <p>Le feedback est analysé puis enregistré via l'API locale, sans créer de nouvelle conversation.
+          Les horodatages sont facultatifs : cochez une option uniquement si vous devez imposer
+          une valeur pour la base de données. Tous les horaires saisis ici sont en UTC.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    utc_now = datetime.now(timezone.utc).replace(microsecond=0)
+    with st.form("feedback_submission_form", clear_on_submit=True):
+        software_id = st.selectbox(
+            "Logiciel concerné",
+            options=[item[0] for item in SOFTWARE_OPTIONS],
+            format_func=lambda value: SOFTWARE_LABELS[value],
+            key="feedback_submission_software",
+        )
+        feedback = st.text_area(
+            "Feedback client",
+            placeholder="Décrivez ici le retour du client…",
+            max_chars=MAX_FEEDBACK_LENGTH,
+            height=145,
+            key="feedback_submission_text",
+        )
+
+        st.markdown("#### Horodatages optionnels")
+        st.caption(
+            "Laissez une option décochée pour laisser le backend appliquer sa valeur par défaut."
+        )
+        timestamp_left, timestamp_right = st.columns(2, gap="medium")
+        with timestamp_left:
+            impose_received_at = st.checkbox(
+                "Imposer la date de réception",
+                key="feedback_submission_impose_received_at",
+            )
+            received_date = st.date_input(
+                "Date de réception (UTC)",
+                value=utc_now.date(),
+                key="feedback_submission_received_date",
+                help="Cette valeur n'est envoyée que si l'option ci-dessus est cochée.",
+            )
+            received_time = st.time_input(
+                "Heure de réception (UTC)",
+                value=utc_now.time(),
+                step=60,
+                key="feedback_submission_received_time",
+                help="Cette valeur n'est envoyée que si l'option ci-dessus est cochée.",
+            )
+        with timestamp_right:
+            impose_analyzed_at = st.checkbox(
+                "Imposer la date d'analyse",
+                key="feedback_submission_impose_analyzed_at",
+            )
+            analyzed_date = st.date_input(
+                "Date d'analyse (UTC)",
+                value=utc_now.date(),
+                key="feedback_submission_analyzed_date",
+                help="Cette valeur n'est envoyée que si l'option ci-dessus est cochée.",
+            )
+            analyzed_time = st.time_input(
+                "Heure d'analyse (UTC)",
+                value=utc_now.time(),
+                step=60,
+                key="feedback_submission_analyzed_time",
+                help="Cette valeur n'est envoyée que si l'option ci-dessus est cochée.",
+            )
+
+        submitted = st.form_submit_button(
+            "Analyser et enregistrer le feedback",
+            key="feedback_submission_submit",
+            type="primary",
+            width="stretch",
+        )
+
+    if not submitted:
+        return
+
+    received_at = (
+        _utc_timestamp(received_date, received_time)
+        if impose_received_at and received_time is not None
+        else None
+    )
+    analyzed_at = (
+        _utc_timestamp(analyzed_date, analyzed_time)
+        if impose_analyzed_at and analyzed_time is not None
+        else None
+    )
+    try:
+        payload = _feedback_submission_payload(
+            feedback=feedback,
+            software_id=software_id,
+            received_at=received_at,
+            analyzed_at=analyzed_at,
+        )
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    try:
+        with st.spinner("Analyse et enregistrement du feedback en cours…"):
+            result = _api_request("POST", "/api/feedbacks", payload=payload)
+    except RuntimeError as error:
+        st.error(f"Le feedback n'a pas pu être enregistré. {error}")
+        return
+
+    st.success("Le feedback a été analysé et enregistré.")
+    analysis = result.get("analysis")
+    if isinstance(analysis, dict):
+        _analysis_card(analysis)
+    record_id = result.get("feedback_record_id")
+    if isinstance(record_id, str) and record_id:
+        st.caption(f"Référence du feedback enregistré : {record_id}")
+
+
 def live_main() -> None:
     """Run the connected POC while preserving the existing visual design."""
 
@@ -1000,6 +1245,9 @@ def live_main() -> None:
 
     if st.session_state.active_view == "dashboard":
         _dashboard_view()
+        return
+    if st.session_state.active_view == "submission":
+        _feedback_submission_view()
         return
 
     st.markdown(

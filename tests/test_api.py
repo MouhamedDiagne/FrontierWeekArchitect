@@ -33,6 +33,7 @@ class FakeRuntime:
         self.shutdown_called = False
         self.sessions: set[str] = set()
         self.messages: list[tuple[str, str]] = []
+        self.submissions: list[dict[str, object]] = []
         request = FeedbackInsightsRequest(
             start_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
             end_date=datetime(2026, 11, 1, tzinfo=timezone.utc),
@@ -114,9 +115,18 @@ class FakeRuntime:
         feedback: str,
         software_id: str,
         received_at,
+        analyzed_at,
     ) -> FeedbackSubmissionResult:
         if feedback == "raise-service-error":
             raise RuntimeError("provider details must not reach the caller")
+        self.submissions.append(
+            {
+                "feedback": feedback,
+                "software_id": software_id,
+                "received_at": received_at,
+                "analyzed_at": analyzed_at,
+            }
+        )
         return FeedbackSubmissionResult(
             analysis=FeedbackAnalysisResult(
                 software=SoftwareReference(id=software_id, name="Targetym AI"),
@@ -214,6 +224,7 @@ class ApiTests(unittest.TestCase):
                 "software_id": "targetym_ai",
                 "feedback": "The report export fails.",
                 "received_at": "2026-10-07T09:30:00Z",
+                "analyzed_at": "2026-10-07T11:35:00+02:00",
             },
         )
 
@@ -221,6 +232,40 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["feedback_record_id"], "feedback-submission-1")
         self.assertEqual(response.json()["analysis"]["software"]["id"], "targetym_ai")
         self.assertEqual(self.runtime.sessions, set())
+        self.assertEqual(
+            self.runtime.submissions,
+            [
+                {
+                    "feedback": "The report export fails.",
+                    "software_id": "targetym_ai",
+                    "received_at": datetime(2026, 10, 7, 9, 30, tzinfo=timezone.utc),
+                    "analyzed_at": datetime(2026, 10, 7, 9, 35, tzinfo=timezone.utc),
+                }
+            ],
+        )
+
+    def test_accepts_received_at_without_analyzed_at(self):
+        response = self.client.post(
+            "/api/feedbacks",
+            json={
+                "software_id": "targetym_ai",
+                "feedback": "The report export fails.",
+                "received_at": "2026-10-07T09:30:00Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            self.runtime.submissions,
+            [
+                {
+                    "feedback": "The report export fails.",
+                    "software_id": "targetym_ai",
+                    "received_at": datetime(2026, 10, 7, 9, 30, tzinfo=timezone.utc),
+                    "analyzed_at": None,
+                }
+            ],
+        )
 
     def test_validates_a_feedback_submission_before_runtime_call(self):
         no_timezone = self.client.post(
@@ -232,6 +277,37 @@ class ApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(no_timezone.status_code, 422)
+
+        analyzed_at_without_timezone = self.client.post(
+            "/api/feedbacks",
+            json={
+                "software_id": "targetym_ai",
+                "feedback": "The report export fails.",
+                "analyzed_at": "2026-10-07T09:30:00",
+            },
+        )
+        self.assertEqual(analyzed_at_without_timezone.status_code, 422)
+
+        analyzed_at_without_received_at = self.client.post(
+            "/api/feedbacks",
+            json={
+                "software_id": "targetym_ai",
+                "feedback": "The report export fails.",
+                "analyzed_at": "2026-10-07T09:30:00Z",
+            },
+        )
+        self.assertEqual(analyzed_at_without_received_at.status_code, 422)
+
+        analyzed_before_received = self.client.post(
+            "/api/feedbacks",
+            json={
+                "software_id": "targetym_ai",
+                "feedback": "The report export fails.",
+                "received_at": "2026-10-07T09:30:00Z",
+                "analyzed_at": "2026-10-07T09:29:59Z",
+            },
+        )
+        self.assertEqual(analyzed_before_received.status_code, 422)
 
         blank = self.client.post(
             "/api/feedbacks",

@@ -167,20 +167,18 @@ Answer from the supported-solution context below. Do not call a tool merely
 because a user mentions a product, sentiment, issue, or feedback-like text.
 
 ### Mission 2 — One feedback analysis
-Use analyze_feedback only when the user explicitly asks for an analysis. Before calling analyze_feedback, collect exactly one supported software product
-and the complete feedback text from the user's own messages. If either fact is
-missing or ambiguous, ask only the concise clarification needed. Do not begin by asking which software is concerned when the user has not explicitly asked for feedback analysis. Copy the
-feedback verbatim and use a canonical software_id. After a successful result,
-summarize only its returned software, sentiment, confidence, language, primary
-functionality, feedback type, problem category, and feedback summary. Preserve a
-mixed sentiment exactly as returned. The host application, not you, handles
-persistence.
+Use analyze_feedback only when the user explicitly asks for an analysis. 
+Before calling analyze_feedback, collect exactly one supported software product and the complete feedback text from the user's own messages. If either fact is
+missing or ambiguous, ask only the concise clarification needed. 
+Do not begin by asking which software is concerned when the user has not explicitly asked for feedback analysis. 
+Copy the feedback verbatim and use a canonical software_id. 
+After a successful result, summarize only its returned software, sentiment, confidence, language, primary functionality, feedback type, problem category, and feedback summary. 
+Preserve a mixed sentiment exactly as returned. 
+The host application, not you, handles persistence.
 
 ### Mission 3 — Historical reporting
-Before calling analyze_feedback_insights, resolve an audience profile:
-marketing, it, support_sales, or management. You may infer the profile only
-when the user's role or requested perspective is unambiguous in the
-conversation; otherwise ask the user to choose one.
+Before calling analyze_feedback_insights, resolve an audience profile: marketing, it, support_sales, or management. 
+You may infer the profile only when the user's role or requested perspective is unambiguous in the conversation; otherwise ask the user to choose one.
 
 #### Natural-language periods
 A period expressed in ordinary language is already an explicit period. Never
@@ -782,6 +780,7 @@ class FeedbackAnalyzerAgent:
         feedback: str,
         software_id: str,
         received_at: datetime | None = None,
+        analyzed_at: datetime | None = None,
     ) -> FeedbackSubmissionResult:
         """Analyse and persist one submitted feedback without a chat turn.
 
@@ -799,12 +798,33 @@ class FeedbackAnalyzerAgent:
             if self.openai is None:
                 raise RuntimeError("The Foundry OpenAI client is unavailable.")
 
+            if analyzed_at is not None and received_at is None:
+                raise ValueError(
+                    "received_at must be provided when analyzed_at is provided."
+                )
+
             if received_at is None:
                 received_at_utc = datetime.now(timezone.utc)
             else:
                 if received_at.tzinfo is None or received_at.utcoffset() is None:
                     raise ValueError("received_at must include a timezone.")
                 received_at_utc = received_at.astimezone(timezone.utc)
+
+            if analyzed_at is None:
+                analyzed_at_utc = None
+            else:
+                if analyzed_at.tzinfo is None or analyzed_at.utcoffset() is None:
+                    raise ValueError("analyzed_at must include a timezone.")
+                analyzed_at_utc = analyzed_at.astimezone(timezone.utc)
+
+            if (
+                received_at is not None
+                and analyzed_at_utc is not None
+                and analyzed_at_utc < received_at_utc
+            ):
+                raise ValueError(
+                    "analyzed_at must be greater than or equal to received_at."
+                )
 
             self._log(
                 "ingestion",
@@ -821,7 +841,11 @@ class FeedbackAnalyzerAgent:
                 raw_comment=request.feedback,
                 analysis=analysis,
                 received_at=received_at_utc,
-                analyzed_at=datetime.now(timezone.utc),
+                # A form or an import source can deliberately preserve the
+                # timestamp at which it considers the feedback analysed.  If
+                # it does not provide one, retain the existing behavior: use
+                # the time immediately before the record is persisted.
+                analyzed_at=analyzed_at_utc or datetime.now(timezone.utc),
             )
             self._log(
                 "ingestion",

@@ -77,7 +77,7 @@ def main() -> None:
 
         stage = "conversation_creation"
         session = feedback_analyzer.start_conversation()
-        print("Assistant: Hello. I am the Agiltym assistant. How can I help you?")
+        print("Assistant: Hello. I am the Agiltym Customer Feedback analyzer. How can I help you?")
         print("Type /quit to end the conversation.")
 
         while True:

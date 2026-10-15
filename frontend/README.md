@@ -37,11 +37,12 @@ $env:FEEDBACK_API_URL = "http://127.0.0.1:8000"
 4. L'API renvoie le texte de l'agent et, lorsqu'ils existent, les résultats
    structurés d'analyse unitaire ou d'insights. Streamlit les affiche sans les
    recalculer.
-5. La barre d'actions en haut de la page contient
-   **Nouvelle conversation**, **Dashboard** et **Historique**. Le premier ouvre une session
-   locale sans effacer les conversations déjà affichées ; le second ouvre le
-   dernier snapshot historique enregistré dans Dataverse, sans relancer le
-   clustering ni les embeddings.
+5. La barre d'actions en haut de la page contient **Nouvelle conversation**,
+   **Saisir un feedback**, **Dashboard** et **Historique**. Le premier ouvre une
+   session locale sans effacer les conversations déjà affichées ; le deuxième
+   ouvre un formulaire indépendant du chat ; le troisième ouvre le dernier
+   snapshot historique enregistré dans Dataverse, sans relancer le clustering
+   ni les embeddings.
 6. Le menu **Historique** permet de reprendre une conversation, y compris depuis
    le dashboard. La barre latérale a été supprimée. Les messages et
    l'identifiant de conversation sont conservés pour la session navigateur en cours.
@@ -66,6 +67,25 @@ après le paragraphe concerné grâce à un marqueur sûr tel que
 `[[visual:priority-signals]]`. Les visualisations restantes sont rendues après
 le texte. Seules les spécifications bornées et validées par le backend sont
 acceptées ; aucune instruction graphique libre du modèle n'est exécutée.
+
+## Saisir un feedback
+
+La vue **Saisir un feedback** appelle directement `POST /api/feedbacks`. Elle
+ne crée donc pas de conversation et passe par le même pipeline d'analyse et de
+sauvegarde Dataverse que le reste de l'application. Le formulaire propose les
+logiciels connus du POC, un commentaire brut de 1 à 4 000 caractères, et deux
+horodatages optionnels saisis en UTC.
+
+- Si aucune date n'est imposée, le backend attribue `received_at` au début du
+  traitement et `analyzed_at` juste avant la sauvegarde.
+- `received_at` peut être imposé seul.
+- `analyzed_at` ne peut être imposé qu'avec `received_at`, et doit être égal ou
+  postérieur à celui-ci. Cette règle évite de créer une chronologie impossible
+  dans Dataverse.
+
+Après une sauvegarde réussie, l'interface affiche l'analyse structurée et
+l'identifiant du record Dataverse. Le formulaire est réinitialisé afin de
+réduire les doubles envois accidentels pendant les tests locaux.
 
 Le thème clair est fixé dans `.streamlit/config.toml` à la racine du projet.
 Les réponses utilisent le Markdown natif (HTML du modèle désactivé). Les KPI
