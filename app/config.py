@@ -28,6 +28,9 @@ DATAVERSE_CLIENT_ID = os.getenv("DATAVERSE_CLIENT_ID")
 DATAVERSE_CLIENT_SECRET = os.getenv("DATAVERSE_CLIENT_SECRET")
 DATAVERSE_FEEDBACK_TABLE = os.getenv("DATAVERSE_FEEDBACK_TABLE")
 DATAVERSE_INSIGHT_ANALYSIS_TABLE = os.getenv("DATAVERSE_INSIGHT_ANALYSIS_TABLE")
+APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv(
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+)
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -66,6 +69,18 @@ def _boolean_env(name: str, default: bool = False) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise RuntimeError(f"{name} must be true or false.")
+
+
+# Client-side monitoring remains opt-in for the prototype.  The Foundry portal
+# can still expose server-side traces once its Application Insights connection
+# is configured, while this flag governs only the local API/CLI/job process.
+OBSERVABILITY_ENABLED = _boolean_env("OBSERVABILITY_ENABLED")
+OBSERVABILITY_CAPTURE_MESSAGE_CONTENT = _boolean_env(
+    "OBSERVABILITY_CAPTURE_MESSAGE_CONTENT"
+)
+OBSERVABILITY_ENABLE_FOUNDRY_GENAI_TRACING = _boolean_env(
+    "OBSERVABILITY_ENABLE_FOUNDRY_GENAI_TRACING"
+)
 
 EMBEDDING_MODEL_DEPLOYMENT_NAME = os.getenv(
     "EMBEDDING_MODEL_DEPLOYMENT_NAME",

@@ -7,6 +7,12 @@ receive only validated domain results.
 
 from __future__ import annotations
 
+from .telemetry import configure_telemetry
+
+# This must happen before FastAPI and Azure SDK imports so their automatic
+# OpenTelemetry instrumentation can observe the process when opted in.
+configure_telemetry("agiltym-feedback-api")
+
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field

@@ -19,6 +19,7 @@ from .config import (
     DATAVERSE_URL,
 )
 from .errors import _log_error
+from .telemetry import traced_operation
 from .models import (
     FeedbackAnalysisResult,
     FeedbackInsightsFilters,
@@ -236,14 +237,21 @@ class DataverseFeedbackRepository:
                 verbose=self._verbose,
             )
 
-            with DataverseClient(
-                base_url=self._base_url,
-                credential=self._credential,
-            ) as client:
-                record_id = client.records.create(
-                    self._table_logical_name,
-                    payload,
-                )
+            with traced_operation(
+                "dataverse.feedback.save",
+                attributes={
+                    "agiltym.software.id": analysis.software.id,
+                    "agiltym.feedback.sentiment": analysis.sentiment.value,
+                },
+            ):
+                with DataverseClient(
+                    base_url=self._base_url,
+                    credential=self._credential,
+                ) as client:
+                    record_id = client.records.create(
+                        self._table_logical_name,
+                        payload,
+                    )
 
             _log(
                 "persistence",
@@ -462,20 +470,26 @@ class DataverseFeedbackRepository:
                 "Reading feedback records for temporary insights.",
                 verbose=self._verbose,
             )
-            with DataverseClient(
-                base_url=self._base_url,
-                credential=self._credential,
-            ) as client:
-                records = list(
-                    client.records.list(
-                        self._table_logical_name,
-                        filter=query_filter,
-                        select=selected_columns,
-                        orderby=[f"{columns.received_at} asc"],
-                        top=self._insights_max_records + 1,
-                        include_annotations="OData.Community.Display.V1.FormattedValue",
+            span_attributes: dict[str, str | int | float | bool] = {
+                "agiltym.insights.max_records": self._insights_max_records,
+            }
+            if filters.software_id is not None:
+                span_attributes["agiltym.software.id"] = filters.software_id
+            with traced_operation("dataverse.feedback.read", attributes=span_attributes):
+                with DataverseClient(
+                    base_url=self._base_url,
+                    credential=self._credential,
+                ) as client:
+                    records = list(
+                        client.records.list(
+                            self._table_logical_name,
+                            filter=query_filter,
+                            select=selected_columns,
+                            orderby=[f"{columns.received_at} asc"],
+                            top=self._insights_max_records + 1,
+                            include_annotations="OData.Community.Display.V1.FormattedValue",
+                        )
                     )
-                )
 
             if len(records) > self._insights_max_records:
                 raise DataverseInsightsReadError(
@@ -663,11 +677,20 @@ class DataverseInsightAnalysisRepository:
                 "Creating the insight-analysis snapshot in Dataverse.",
                 verbose=self._verbose,
             )
-            with DataverseClient(
-                base_url=self._base_url,
-                credential=self._credential,
-            ) as client:
-                record_id = client.records.create(self._table_logical_name, payload)
+            with traced_operation(
+                "dataverse.insight_snapshot.save",
+                attributes={
+                    "agiltym.insights.source": snapshot.source.value,
+                    "agiltym.insights.profile": snapshot.audience_report.profile.value,
+                    "agiltym.insights.feedback_count": snapshot.insights.total_feedbacks,
+                    "agiltym.insights.cluster_count": len(snapshot.insights.clusters),
+                },
+            ):
+                with DataverseClient(
+                    base_url=self._base_url,
+                    credential=self._credential,
+                ) as client:
+                    record_id = client.records.create(self._table_logical_name, payload)
             _log(
                 "persistence",
                 f"Dataverse insight-analysis snapshot created: {record_id}.",

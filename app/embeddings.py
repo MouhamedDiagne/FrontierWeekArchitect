@@ -6,6 +6,7 @@ from math import isfinite
 from typing import Any, Protocol, Sequence
 
 from .errors import _log_error
+from .telemetry import traced_operation
 from .utils import _log
 
 
@@ -117,10 +118,19 @@ class FoundryEmbeddingProvider:
                 )
                 stage = "embedding-creation-request"
     
-                response = self._embedding_client.embeddings.create(
-                    model=self._deployment_name,
-                    input=list(batch),
-                )
+                with traced_operation(
+                    "feedback.embeddings.create",
+                    attributes={
+                        "gen_ai.request.model": self._deployment_name,
+                        "agiltym.embedding.batch_size": len(batch),
+                        "agiltym.embedding.batch_number": batch_number,
+                        "agiltym.embedding.batch_count": len(batches),
+                    },
+                ):
+                    response = self._embedding_client.embeddings.create(
+                        model=self._deployment_name,
+                        input=list(batch),
+                    )
                 stage = "embedding-data-verification"
                 response_data = getattr(response, "data", None)
                 if not isinstance(response_data, (list, tuple)):

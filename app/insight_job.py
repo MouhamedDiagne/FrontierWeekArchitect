@@ -8,6 +8,10 @@ configured.
 
 from __future__ import annotations
 
+from .telemetry import configure_telemetry
+
+configure_telemetry("agiltym-feedback-insight-job")
+
 import argparse
 import json
 import sys

@@ -16,6 +16,7 @@ from .clustering import (
 from .dataverse import FeedbackReader
 from .embeddings import EmbeddingProvider
 from .errors import _error_was_logged, _log_error, _safe_error_detail
+from .telemetry import traced_operation
 from .models import (
     ClusterPeriodMetrics,
     ClusterPriority,
@@ -256,11 +257,18 @@ class FeedbackInsightsService:
             self._log(
                 f"Creating temporary clusters from {len(all_records)} feedback record(s)."
             )
-            clusters = cluster_feedback_records(
-                all_records,
-                embedding_provider=self._embedding_provider,
-                config=self._clustering_config,
-            )
+            with traced_operation(
+                "insights.clustering",
+                attributes={
+                    "agiltym.feedback.count": len(all_records),
+                    "agiltym.comparison.enabled": previous_filters is not None,
+                },
+            ):
+                clusters = cluster_feedback_records(
+                    all_records,
+                    embedding_provider=self._embedding_provider,
+                    config=self._clustering_config,
+                )
 
             records_by_id = {record.feedback_id: record for record in all_records}
             clusters = [

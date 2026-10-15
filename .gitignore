@@ -4,4 +4,9 @@ hackathon-code-base/
 .env.*
 app/__pycache__/
 tests/fixtures/
+tests/__pycache__/
 scripts/
+tmp/
+output/
+.codex-finalizer/
+.presentation-build/

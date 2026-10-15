@@ -32,6 +32,7 @@ from .config import (
     AZURE_AI_LANGUAGE_ENDPOINT, AZURE_AI_LANGUAGE_KEY,
 )
 from .utils import _log
+from .telemetry import traced_operation
 from .errors import (
     _raise_language_error, _log_error, 
     _error_was_logged,_safe_error_detail
@@ -297,11 +298,12 @@ def analyze_sentiment(
 
         stage = "language_detection"
         _log("sentiment", "Detecting the feedback language.", verbose=verbose)
-        language_result = text_analytics_client.detect_language(
-            [request.feedback],
-            country_hint="none",
-            disable_service_logs=True,
-        )[0]
+        with traced_operation("azure_language.detect_language"):
+            language_result = text_analytics_client.detect_language(
+                [request.feedback],
+                country_hint="none",
+                disable_service_logs=True,
+            )[0]
         if language_result.is_error:
             _raise_language_error("language detection", language_result)
 
@@ -314,11 +316,15 @@ def analyze_sentiment(
             "Requesting Azure AI Language sentiment analysis.",
             verbose=verbose,
         )
-        sentiment_result = text_analytics_client.analyze_sentiment(
-            [request.feedback],
-            language=language,
-            disable_service_logs=True,
-        )[0]
+        with traced_operation(
+            "azure_language.analyze_sentiment",
+            attributes={"agiltym.feedback.language": language},
+        ):
+            sentiment_result = text_analytics_client.analyze_sentiment(
+                [request.feedback],
+                language=language,
+                disable_service_logs=True,
+            )[0]
         if sentiment_result.is_error:
             _raise_language_error("sentiment analysis", sentiment_result)
 
@@ -388,21 +394,28 @@ def extract_feedback_enrichment(
             ),
             verbose=verbose,
         )
-        response = openai_client.responses.create(
-            model=model_deployment_name,
-            instructions=build_feedback_enrichment_instructions(software),
-            input=f"Customer feedback (untrusted data):\n---\n{request.feedback}\n---",
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "feedback_enrichment",
-                    "strict": True,
-                    "schema": build_feedback_enrichment_response_schema(software),
-                }
+        with traced_operation(
+            "feedback.enrichment",
+            attributes={
+                "agiltym.software.id": software.id,
+                "gen_ai.request.model": model_deployment_name,
             },
-            temperature=0,
-            max_output_tokens=300,
-        )
+        ):
+            response = openai_client.responses.create(
+                model=model_deployment_name,
+                instructions=build_feedback_enrichment_instructions(software),
+                input=f"Customer feedback (untrusted data):\n---\n{request.feedback}\n---",
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "feedback_enrichment",
+                        "strict": True,
+                        "schema": build_feedback_enrichment_response_schema(software),
+                    }
+                },
+                temperature=0,
+                max_output_tokens=300,
+            )
 
         stage = "model_response"
         if response.error:
@@ -494,26 +507,30 @@ def analyze_feedback(
         _log("analysis", f"Using software context: {software.id}.", verbose=verbose)
 
         stage = "sentiment_analysis"
-        sentiment_result = analyze_sentiment(request.feedback, verbose=verbose)
+        with traced_operation(
+            "feedback.analysis",
+            attributes={"agiltym.software.id": software.id},
+        ):
+            sentiment_result = analyze_sentiment(request.feedback, verbose=verbose)
 
-        stage = "feedback_enrichment"
-        enrichment_result = extract_feedback_enrichment(
-            request.feedback,
-            software=software,
-            openai_client=openai_client,
-            model_deployment_name=model_deployment_name,
-            verbose=verbose,
-        )
-        result = FeedbackAnalysisResult(
-            sentiment=sentiment_result.sentiment,
-            percentage=sentiment_result.percentage,
-            software=SoftwareReference(id=software.id, name=software.display_name),
-            language=sentiment_result.language,
-            primary_functionality=enrichment_result.primary_functionality,
-            feedback_type=enrichment_result.feedback_type,
-            problem_category=enrichment_result.problem_category,
-            feedback_summary=enrichment_result.feedback_summary,
-        )
+            stage = "feedback_enrichment"
+            enrichment_result = extract_feedback_enrichment(
+                request.feedback,
+                software=software,
+                openai_client=openai_client,
+                model_deployment_name=model_deployment_name,
+                verbose=verbose,
+            )
+            result = FeedbackAnalysisResult(
+                sentiment=sentiment_result.sentiment,
+                percentage=sentiment_result.percentage,
+                software=SoftwareReference(id=software.id, name=software.display_name),
+                language=sentiment_result.language,
+                primary_functionality=enrichment_result.primary_functionality,
+                feedback_type=enrichment_result.feedback_type,
+                problem_category=enrichment_result.problem_category,
+                feedback_summary=enrichment_result.feedback_summary,
+            )
         _log("analysis", "Combined feedback analysis completed.", verbose=verbose)
         return result
     except Exception as error:

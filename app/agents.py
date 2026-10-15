@@ -34,6 +34,7 @@ from .embeddings import FoundryEmbeddingProvider
 from .errors import _error_was_logged, _log_error
 from .insights import FeedbackInsightsService, OpenAIClusterLabelProvider
 from .reporting import ProfiledInsightsReportBuilder
+from .telemetry import traced_operation
 from .knowledge import (
     SoftwareCatalog,
     SoftwareKnowledge,
@@ -631,21 +632,29 @@ class FeedbackAnalyzerAgent:
 
         self._require_openai_client()
         request = FeedbackInsightsRequest.model_validate(request)
-        insights = self._get_insights_service().analyze(request)
-        audience_report = ProfiledInsightsReportBuilder.build(
-            insights,
-            request.audience_profile,
-        )
-        snapshot_id = None
-        if self.insights_snapshot_repository is not None:
-            snapshot_id = self.insights_snapshot_repository.save_snapshot(
-                snapshot=FeedbackInsightsSnapshot(
-                    generated_at=datetime.now(timezone.utc),
-                    source=source,
-                    insights=insights,
-                    audience_report=audience_report,
-                )
+        span_attributes: dict[str, str | int | float | bool] = {
+            "agiltym.insights.source": source.value,
+            "agiltym.insights.profile": request.audience_profile.value,
+            "agiltym.comparison.enabled": request.comparison_start_date is not None,
+        }
+        if request.software_id is not None:
+            span_attributes["agiltym.software.id"] = request.software_id
+        with traced_operation("insights.historical_analysis", attributes=span_attributes):
+            insights = self._get_insights_service().analyze(request)
+            audience_report = ProfiledInsightsReportBuilder.build(
+                insights,
+                request.audience_profile,
             )
+            snapshot_id = None
+            if self.insights_snapshot_repository is not None:
+                snapshot_id = self.insights_snapshot_repository.save_snapshot(
+                    snapshot=FeedbackInsightsSnapshot(
+                        generated_at=datetime.now(timezone.utc),
+                        source=source,
+                        insights=insights,
+                        audience_report=audience_report,
+                    )
+                )
         return InsightsAnalysisRunResult(
             insights=insights,
             audience_report=audience_report,
@@ -765,12 +774,19 @@ class FeedbackAnalyzerAgent:
         analyzed_at: datetime,
     ) -> str:
         self._log("persistence", "Saving validated analysis to Dataverse.")
-        record_id = self.feedback_repository.save(
-            raw_comment=raw_comment,
-            analysis=analysis,
-            received_at=received_at,
-            analyzed_at=analyzed_at,
-        )
+        with traced_operation(
+            "feedback.dataverse_persistence",
+            attributes={
+                "agiltym.software.id": analysis.software.id,
+                "agiltym.feedback.sentiment": analysis.sentiment.value,
+            },
+        ):
+            record_id = self.feedback_repository.save(
+                raw_comment=raw_comment,
+                analysis=analysis,
+                received_at=received_at,
+                analyzed_at=analyzed_at,
+            )
         self._log("persistence", f"Validated analysis saved to Dataverse: {record_id}.")
         return record_id
 

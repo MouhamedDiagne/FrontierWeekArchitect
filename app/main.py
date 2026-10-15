@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from .telemetry import configure_telemetry
+
+configure_telemetry("agiltym-feedback-cli")
+
 import sys
 
 from .agents import FeedbackAnalyzerAgent
